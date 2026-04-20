@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Packing List Manager — PERFECT PTY</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1a56db">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="PackingList">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+/* ── Reset & variables ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --primary:       #1a56db;
+  --primary-dark:  #1e429f;
+  --primary-light: #ebf5ff;
+  --success:       #0e9f6e;
+  --warning:       #c27803;
+  --danger:        #e02424;
+  --bg:            #f3f4f6;
+  --surface:       #ffffff;
+  --text:          #111827;
+  --text-2:        #6b7280;
+  --border:        #e5e7eb;
+  --radius:        8px;
+  --shadow:        0 1px 3px rgba(0,0,0,.12), 0 1px 2px rgba(0,0,0,.08);
+}
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Navigation ─────────────────────────────────────────────────── */
+nav {
+  background: var(--primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  height: 52px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: var(--shadow);
+}
+.nav-brand {
+  font-weight: 700;
+  font-size: 16px;
+  white-space: nowrap;
+  margin-right: 8px;
+}
+.nav-tabs {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav-tabs::-webkit-scrollbar { display: none; }
+.nav-tabs button {
+  background: transparent;
+  border: none;
+  color: rgba(255,255,255,.75);
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background .15s, color .15s;
+}
+.nav-tabs button:hover  { background: rgba(255,255,255,.12); color: #fff; }
+.nav-tabs button.active { background: rgba(255,255,255,.22); color: #fff; }
+.nav-actions { display: flex; gap: 6px; margin-left: auto; }
+.nav-actions button {
+  background: rgba(255,255,255,.18);
+  border: 1px solid rgba(255,255,255,.35);
+  color: #fff;
+  padding: 5px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background .15s;
+}
+.nav-actions button:hover { background: rgba(255,255,255,.30); }
+
+/* ── Main / views ───────────────────────────────────────────────── */
+main { flex: 1; overflow: auto; }
+.view { display: none; padding: 20px; }
+.view.active { display: block; }
+
+/* ── Cards ──────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.card-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: var(--text);
+}
+
+/* ── Upload view ────────────────────────────────────────────────── */
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 48px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+  background: var(--surface);
+}
+.dropzone:hover, .dropzone.drag-over {
+  border-color: var(--primary);
+  background: var(--primary-light);
+}
+.dropzone svg { width: 48px; height: 48px; margin-bottom: 12px; color: var(--primary); }
+.dropzone p { color: var(--text-2); margin: 4px 0; }
+.dropzone strong { color: var(--text); }
+#file-input { display: none; }
+
+.upload-actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-radius: 6px; border: none;
+  font-size: 13px; font-weight: 600; cursor: pointer; transition: filter .15s;
+}
+.btn:hover { filter: brightness(.92); }
+.btn-primary   { background: var(--primary); color: #fff; }
+.btn-secondary { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+.btn-danger    { background: var(--danger); color: #fff; }
+.btn-success   { background: var(--success); color: #fff; }
+
+/* ── Progress ───────────────────────────────────────────────────── */
+.progress-wrap { margin: 12px 0; }
+.progress-label { font-size: 12px; color: var(--text-2); margin-bottom: 4px; }
+.progress-bar {
+  height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%; background: var(--primary);
+  transition: width .3s; border-radius: 3px;
+}
+
+/* ── Stats bar ──────────────────────────────────────────────────── */
+.stats-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.stat-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+}
+.stat-card .stat-value {
+  font-size: 24px; font-weight: 700; color: var(--primary);
+}
+.stat-card .stat-label { font-size: 12px; color: var(--text-2); margin-top: 2px; }
+
+/* ── PDF view delivery card ─────────────────────────────────────── */
+.delivery-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+.delivery-header {
+  background: var(--primary);
+  color: #fff;
+  padding: 12px 16px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+.delivery-code { font-size: 16px; font-weight: 700; }
+.delivery-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 4px 16px;
+  padding: 10px 16px;
+  background: var(--primary-light);
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.delivery-meta span { color: var(--text-2); }
+.delivery-meta strong { color: var(--text); }
+
+/* ── Delivery table ─────────────────────────────────────────────── */
+.table-wrap { overflow-x: auto; }
+table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+thead th {
+  background: var(--primary); color: #fff;
+  padding: 8px 8px; text-align: left; white-space: nowrap;
+  font-weight: 600; position: sticky; top: 0;
+}
+thead th:first-child { border-radius: 0; }
+tbody tr:nth-child(even) { background: #f9fafb; }
+tbody tr:hover { background: var(--primary-light); }
+tbody td {
+  padding: 6px 8px; border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.td-product { min-width: 200px; }
+.td-product .product-code {
+  font-weight: 700; color: var(--primary); font-family: monospace;
+}
+.td-product .product-desc { color: var(--text-2); white-space: pre-line; }
+tfoot td {
+  background: #f3f4f6; font-weight: 700;
+  padding: 8px 8px; border-top: 2px solid var(--primary);
+}
+.td-num { text-align: right; }
+.badge {
+  display: inline-block; padding: 1px 7px; border-radius: 12px;
+  font-size: 11px; font-weight: 600;
+}
+.badge-perfect { background: #dbeafe; color: #1e40af; }
+.badge-natsuki { background: #fef3c7; color: #92400e; }
+.badge-cln     { background: #d1fae5; color: #065f46; }
+.badge-stk     { background: #fce7f3; color: #9d174d; }
+
+/* ── Filter bar ─────────────────────────────────────────────────── */
+.filter-bar {
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
+  background: var(--surface); padding: 14px 16px;
+  border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 16px;
+}
+.filter-group { display: flex; flex-direction: column; gap: 4px; }
+.filter-group label { font-size: 11px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; }
+.filter-group input, .filter-group select {
+  padding: 6px 10px; border: 1px solid var(--border);
+  border-radius: 6px; font-size: 13px; background: var(--surface);
+  color: var(--text);
+}
+.filter-group input:focus, .filter-group select:focus {
+  outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-light);
+}
+#results-count { font-size: 13px; color: var(--text-2); margin-left: auto; align-self: center; }
+
+/* ── Sortable table headers ─────────────────────────────────────── */
+.sortable { cursor: pointer; user-select: none; }
+.sortable::after { content: ' ⇅'; font-size: 10px; opacity: .6; }
+.sort-asc::after { content: ' ↑'; opacity: 1; }
+.sort-desc::after { content: ' ↓'; opacity: 1; }
+
+/* ── Notifications ──────────────────────────────────────────────── */
+#notifications {
+  position: fixed; bottom: 20px; right: 20px;
+  display: flex; flex-direction: column; gap: 8px; z-index: 999;
+}
+.notif {
+  min-width: 260px; max-width: 380px;
+  padding: 12px 16px; border-radius: var(--radius);
+  font-size: 13px; font-weight: 500; box-shadow: var(--shadow);
+  animation: slideIn .2s ease;
+  display: flex; align-items: center; gap: 10px;
+}
+.notif-success { background: #ecfdf5; color: #065f46; border-left: 3px solid var(--success); }
+.notif-error   { background: #fef2f2; color: #991b1b; border-left: 3px solid var(--danger); }
+.notif-info    { background: var(--primary-light); color: var(--primary-dark); border-left: 3px solid var(--primary); }
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ── Recent files list ──────────────────────────────────────────── */
+.recent-list { display: flex; flex-direction: column; gap: 8px; }
+.recent-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--surface);
+}
+.recent-item .ri-icon { font-size: 20px; }
+.recent-item .ri-info { flex: 1; }
+.recent-item .ri-name { font-weight: 600; }
+.recent-item .ri-meta { font-size: 11px; color: var(--text-2); }
+.recent-item .ri-del {
+  background: none; border: none; color: var(--text-2);
+  cursor: pointer; padding: 4px; font-size: 16px; border-radius: 4px;
+}
+.recent-item .ri-del:hover { color: var(--danger); background: #fef2f2; }
+
+/* ── Empty state ────────────────────────────────────────────────── */
+.empty-state {
+  text-align: center; padding: 60px 24px; color: var(--text-2);
+}
+.empty-state svg { width: 64px; height: 64px; margin-bottom: 16px; opacity: .4; }
+.empty-state h3 { font-size: 16px; color: var(--text); margin-bottom: 8px; }
+
+/* ── Summary tables ─────────────────────────────────────────────── */
+.summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 768px) { .summary-grid { grid-template-columns: 1fr; } }
+
+/* ── Scrollbar ──────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-brand">
+    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="vertical-align:middle;margin-right:6px"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+    Packing List Manager
+  </div>
+  <div class="nav-tabs">
+    <button data-view="upload" class="active">📄 Cargar PDF</button>
+    <button data-view="pdf-view">📋 Vista PDF</button>
+    <button data-view="summary">📊 Resumen</button>
+    <button data-view="database">🗄️ Base de datos</button>
+  </div>
+  <div class="nav-actions">
+    <button id="btn-export-excel" title="Exportar todo a Excel">⬇ Excel</button>
+  </div>
+</nav>
+
+<main>
+  <!-- ── UPLOAD VIEW ────────────────────────────────────────────── -->
+  <div id="view-upload" class="view active">
+    <div class="card" style="max-width:640px;margin:0 auto 20px">
+      <div class="card-title">Cargar packing list PDF</div>
+      <div class="dropzone" id="dropzone">
+        <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+          <path d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.338-2.32 5.25 5.25 0 0 1 1.23 10.2"/>
+        </svg>
+        <strong>Arrastrá el PDF aquí</strong>
+        <p>o hacé clic para seleccionar archivos</p>
+        <p style="font-size:11px;margin-top:8px;opacity:.7">Soporta múltiples archivos PDF</p>
+      </div>
+      <input type="file" id="file-input" accept=".pdf" multiple>
+      <div id="progress-area"></div>
+      <div class="upload-actions">
+        <button class="btn btn-primary" id="btn-select-file">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 16.5V9.75m0 0 3 3m-3-3-3 3"/><path d="M19.5 19.5h-15"/></svg>
+          Seleccionar PDF
+        </button>
+        <button class="btn btn-secondary" id="btn-test-data">
+          🧪 Cargar datos de prueba
+        </button>
+      </div>
+    </div>
+
+    <div class="card" style="max-width:640px;margin:0 auto" id="recent-card">
+      <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+        Entregas cargadas
+        <span id="delivery-count" style="font-size:12px;color:var(--text-2);font-weight:400"></span>
+      </div>
+      <div id="recent-list-wrap">
+        <div class="empty-state">
+          <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/>
+          </svg>
+          <h3>Sin entregas cargadas</h3>
+          <p>Cargá un PDF para empezar</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PDF VIEW ───────────────────────────────────────────────── -->
+  <div id="view-pdf-view" class="view">
+    <div id="pdf-view-content">
+      <div class="empty-state">
+        <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" width="64" height="64">
+          <path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12"/>
+        </svg>
+        <h3>No hay entregas para mostrar</h3>
+        <p>Cargá un PDF primero</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SUMMARY VIEW ───────────────────────────────────────────── -->
+  <div id="view-summary" class="view">
+    <div id="summary-content">
+      <div class="empty-state">
+        <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" width="64" height="64">
+          <path d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"/>
+        </svg>
+        <h3>Sin datos para resumir</h3>
+        <p>Cargá al menos un PDF</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DATABASE VIEW ─────────────────────────────────────────── -->
+  <div id="view-database" class="view">
+    <div class="filter-bar" id="filter-bar">
+      <div class="filter-group">
+        <label>Desde</label>
+        <input type="date" id="filter-date-from">
+      </div>
+      <div class="filter-group">
+        <label>Hasta</label>
+        <input type="date" id="filter-date-to">
+      </div>
+      <div class="filter-group">
+        <label>Código producto</label>
+        <input type="text" id="filter-code" placeholder="ej. 11001" style="width:120px">
+      </div>
+      <div class="filter-group">
+        <label>Marca</label>
+        <select id="filter-brand">
+          <option value="">Todas</option>
+          <option value="PERFECT">PERFECT</option>
+          <option value="NATSUKI">NATSUKI</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Buscar</label>
+        <input type="text" id="filter-search" placeholder="Buscar..." style="width:200px">
+      </div>
+      <button class="btn btn-secondary" id="btn-clear-filters" style="margin-bottom:0">✕ Limpiar</button>
+      <span id="results-count"></span>
+      <button class="btn btn-danger" id="btn-clear-db" style="margin-left:auto">🗑 Limpiar BD</button>
+    </div>
+    <div id="db-table-wrap"></div>
+  </div>
+</main>
+
+<div id="notifications"></div>
+
+<!-- PDF.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- xlsx-js-style (SheetJS fork with cell styling) -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
