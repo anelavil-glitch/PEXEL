@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#1a56db">
+<meta name="description" content="Packing List Manager — PERFECT PTY / PARQUE DEL MAR">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="PL Manager">
+<link rel="manifest" href="/manifest.json">
+<title>Packing List Manager</title>
+<style>
+:root{--blue:#1a56db;--blue-d:#1e40af;--blue-l:#e8f0fe;--green:#057a55;--green-l:#def7ec;
+--gray-50:#f9fafb;--gray-100:#f3f4f6;--gray-200:#e5e7eb;--gray-400:#9ca3af;
+--gray-600:#4b5563;--gray-700:#374151;--gray-900:#111827;--white:#fff;
+--r:8px;--rl:12px;--sh:0 1px 3px rgba(0,0,0,.1)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+background:var(--gray-50);color:var(--gray-900);font-size:14px;min-height:100vh}
+.hdr{background:var(--blue);color:#fff;padding:12px 16px;display:flex;align-items:center;
+gap:12px;box-shadow:var(--sh);position:sticky;top:0;z-index:100}
+.hdr-logo{width:32px;height:32px;background:rgba(255,255,255,.2);border-radius:8px;
+display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.hdr-title{font-size:16px;font-weight:600}
+.hdr-sub{font-size:11px;opacity:.8}
+.hdr-chips{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;max-width:50%}
+.chip{background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.3);
+border-radius:20px;padding:3px 10px;font-size:11px;display:flex;align-items:center;gap:4px}
+.chip button{background:none;border:none;color:#fff;cursor:pointer;font-size:14px;line-height:1;opacity:.7}
+.chip button:hover{opacity:1}
+.nav{background:#fff;border-bottom:1px solid var(--gray-200);display:flex;overflow-x:auto;scrollbar-width:none}
+.nav::-webkit-scrollbar{display:none}
+.tab{padding:12px 20px;border:none;background:none;color:var(--gray-600);cursor:pointer;
+font-size:13px;font-weight:500;white-space:nowrap;border-bottom:2px solid transparent;transition:all .15s}
+.tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+.tab:hover:not(.active){color:var(--gray-900);background:var(--gray-50)}
+.main{max-width:1200px;margin:0 auto;padding:16px}
+.view{display:none}.view.active{display:block}
+.zone{border:2px dashed var(--gray-200);border-radius:var(--rl);padding:2rem;
+text-align:center;cursor:pointer;background:#fff;transition:all .2s;margin-bottom:12px}
+.zone:hover,.zone.over{border-color:var(--blue);background:var(--blue-l)}
+.zone h3{font-size:15px;margin-bottom:4px}
+.zone p{font-size:12px;color:var(--gray-400)}
+.card{background:#fff;border:1px solid var(--gray-200);border-radius:var(--rl);
+padding:14px 16px;margin-bottom:12px;box-shadow:var(--sh)}
+.card-title{font-size:11px;font-weight:600;color:var(--gray-400);
+text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:12px}
+.stat{background:#fff;border:1px solid var(--gray-200);border-radius:var(--r);padding:12px;text-align:center}
+.stat-n{font-size:22px;font-weight:700;color:var(--blue)}
+.stat-l{font-size:11px;color:var(--gray-400);margin-top:2px}
+.prog-wrap{background:#fff;border:1px solid var(--gray-200);border-radius:var(--rl);
+padding:14px 16px;margin-bottom:12px;display:none}
+.prog-bar{height:6px;background:var(--gray-200);border-radius:3px;overflow:hidden;margin:8px 0}
+.prog-fill{height:100%;background:var(--blue);width:0%;transition:width .3s}
+.prog-lbl{font-size:12px;color:var(--gray-600)}
+.btn{padding:8px 16px;border-radius:var(--r);border:1px solid var(--gray-200);
+background:#fff;color:var(--gray-700);cursor:pointer;font-size:13px;font-weight:500;transition:all .15s}
+.btn:hover{background:var(--gray-100)}
+.btn-p{background:var(--blue);color:#fff;border-color:var(--blue)}
+.btn-p:hover{background:var(--blue-d)}
+.btn-g{background:var(--green);color:#fff;border-color:var(--green)}
+.btn-g:hover{opacity:.9}
+.btn-r{color:#dc2626;border-color:#fca5a5}
+.btn-r:hover{background:#fef2f2}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+.tbl-wrap{overflow-x:auto;border-radius:var(--r);border:1px solid var(--gray-200)}
+table{width:100%;border-collapse:collapse;font-size:12px;min-width:500px}
+th{padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--gray-600);
+background:var(--gray-50);border-bottom:1px solid var(--gray-200);white-space:nowrap}
+td{padding:6px 10px;border-bottom:1px solid var(--gray-100);vertical-align:top;color:var(--gray-700)}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--gray-50)}
+tr.total-row td{background:var(--gray-100);font-weight:600;color:var(--gray-900)}
+.ent-block{background:#fff;border:1px solid var(--gray-200);border-radius:var(--rl);
+margin-bottom:16px;overflow:hidden;box-shadow:var(--sh)}
+.ent-hdr{color:#fff;padding:10px 14px;display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+.ent-hdr-item{font-size:12px}
+.ent-hdr-item span{opacity:.75}
+.ent-hdr-item strong{font-weight:600}
+.badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px}
+.bc{background:var(--blue-l);color:var(--blue-d)}
+.bg{background:var(--green-l);color:var(--green)}
+.bgr{background:var(--gray-100);color:var(--gray-600)}
+.filter-bar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.filter-bar input,.filter-bar select{padding:7px 10px;border:1px solid var(--gray-200);
+border-radius:var(--r);background:#fff;color:var(--gray-900);font-size:13px}
+.filter-bar input{flex:1;min-width:180px}
+.empty{text-align:center;padding:3rem 1rem;color:var(--gray-400)}
+.empty-icon{font-size:40px;margin-bottom:8px}
+.empty h3{font-size:15px;color:var(--gray-600);margin-bottom:4px}
+.install-bar{background:var(--blue-l);border:1px solid #bfdbfe;border-radius:var(--rl);
+padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;gap:12px}
+.install-bar p{font-size:13px;color:var(--blue-d);flex:1}
+.toast{position:fixed;bottom:24px;right:24px;background:var(--gray-900);color:#fff;
+padding:10px 16px;border-radius:var(--r);font-size:13px;z-index:999;
+opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+.err{color:#dc2626;font-size:12px;margin-top:6px}
+@media(max-width:600px){.main{padding:8px}.ent-hdr{gap:10px}}
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <div class="hdr-logo">📦</div>
+  <div>
+    <div class="hdr-title">Packing List Manager</div>
+    <div class="hdr-sub">PERFECT PTY &amp; PARQUE DEL MAR · Bolivia</div>
+  </div>
+  <div class="hdr-chips" id="chips"></div>
+</header>
+
+<nav class="nav">
+  <button class="tab active" onclick="showView('upload')">Cargar PDF</button>
+  <button class="tab" onclick="showView('preview')">Vista PDF</button>
+  <button class="tab" onclick="showView('summary')">Resumen</button>
+  <button class="tab" onclick="showView('db')">Base de datos</button>
+</nav>
+
+<main class="main">
+  <div class="install-bar" id="install-bar" style="display:none">
+    <div style="font-size:22px">📲</div>
+    <p><strong>Instalá como app</strong> — Funciona sin internet después de instalar</p>
+    <button class="btn btn-p" id="install-btn">Instalar</button>
+    <button class="btn" onclick="document.getElementById('install-bar').style.display='none'">×</button>
+  </div>
+
+  <!-- UPLOAD -->
+  <div class="view active" id="view-upload">
+    <div class="zone" id="dz" onclick="document.getElementById('fi').click()">
+      <div style="font-size:28px;margin-bottom:.5rem">📄</div>
+      <h3>Arrastrá PDFs aquí o hacé clic para seleccionar</h3>
+      <p>Formatos soportados: COLON/OUT (PERFECT PTY) y WH/OUT (PARQUE DEL MAR 37D)</p>
+    </div>
+    <input type="file" id="fi" accept=".pdf" multiple style="display:none">
+
+    <div class="prog-wrap" id="prog-wrap">
+      <div class="card-title">Procesando en el servidor</div>
+      <div class="prog-bar"><div class="prog-fill" id="prog"></div></div>
+      <div class="prog-lbl" id="prog-lbl">—</div>
+    </div>
+
+    <div id="upload-result" style="display:none">
+      <div class="stat-grid" id="stats"></div>
+      <div class="actions">
+        <button class="btn btn-p" id="dl-excel">⬇ Descargar Excel completo</button>
+        <button class="btn" onclick="showView('preview')">Vista PDF →</button>
+        <button class="btn" onclick="showView('summary')">Resumen →</button>
+        <button class="btn" onclick="showView('db')">Base de datos →</button>
+        <button class="btn btn-r" style="margin-left:auto" onclick="clearAll()">🗑 Limpiar todo</button>
+      </div>
+      <div id="upload-err" class="err"></div>
+    </div>
+
+    <div id="empty-state" class="empty">
+      <div class="empty-icon">📂</div>
+      <h3>Sin archivos cargados</h3>
+      <p>Arrastrá un PDF de packing list para comenzar</p>
+    </div>
+  </div>
+
+  <!-- PREVIEW -->
+  <div class="view" id="view-preview">
+    <div id="preview-content">
+      <div class="empty"><div class="empty-icon">👁</div><h3>Sin datos</h3><p>Cargá un PDF primero</p></div>
+    </div>
+  </div>
+
+  <!-- SUMMARY -->
+  <div class="view" id="view-summary">
+    <div id="summary-content">
+      <div class="empty"><div class="empty-icon">📊</div><h3>Sin datos</h3><p>Cargá un PDF primero</p></div>
+    </div>
+  </div>
+
+  <!-- DB -->
+  <div class="view" id="view-db">
+    <div class="filter-bar">
+      <input type="text" id="db-search" placeholder="Buscar código, descripción, marca...">
+      <select id="db-ent"><option value="">Todas las entregas</option></select>
+      <select id="db-marca"><option value="">Todas las marcas</option></select>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr>
+          <th>Entrega</th><th>Orden</th><th>Fecha</th><th>Código</th><th>Descripción</th>
+          <th>Cant.</th><th>Marca</th><th>L</th><th>W</th><th>H</th>
+          <th>PZxB</th><th>kg</th><th>m³</th><th>Bultos</th><th>N°Bultos</th><th>Ubic./Desde</th>
+        </tr></thead>
+        <tbody id="db-body">
+          <tr><td colspan="16"><div class="empty" style="padding:2rem">
+            <div class="empty-icon">🗄️</div><h3>Base de datos vacía</h3></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;flex-wrap:wrap;gap:8px">
+      <span style="font-size:12px;color:var(--gray-400)" id="db-count">0 registros</span>
+      <div class="actions" style="margin:0">
+        <button class="btn btn-g" onclick="exportCSV()">Exportar CSV</button>
+        <button class="btn btn-p" onclick="exportDBExcel()">Exportar Excel</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '';  // same origin
+let DB = [], ENTREGAS = [], ALL_DATA = null;
+
+// ── NAV ──────────────────────────────────────────────────────────────────────
+function showView(id) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('view-' + id).classList.add('active');
+  ['upload','preview','summary','db'].indexOf(id);
+  document.querySelectorAll('.tab')[['upload','preview','summary','db'].indexOf(id)].classList.add('active');
+}
+
+function toast(msg, ms=2500) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), ms);
+}
+
+// ── DROP ─────────────────────────────────────────────────────────────────────
+const dz = document.getElementById('dz');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('over'); handleFiles(e.dataTransfer.files); });
+document.getElementById('fi').addEventListener('change', e => handleFiles(e.target.files));
+document.getElementById('db-search').addEventListener('input', renderDB);
+document.getElementById('db-ent').addEventListener('change', renderDB);
+document.getElementById('db-marca').addEventListener('change', renderDB);
+
+// ── UPLOAD ───────────────────────────────────────────────────────────────────
+async function handleFiles(files) {
+  if (!files.length) return;
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('prog-wrap').style.display = 'block';
+  document.getElementById('upload-result').style.display = 'none';
+  document.getElementById('upload-err').textContent = '';
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    if (!file.name.toLowerCase().endsWith('.pdf')) continue;
+    setP(Math.round((i / files.length) * 85), `Procesando: ${file.name}`);
+
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const res = await fetch(`${API}/parse`, { method: 'POST', body: fd });
+      if (!res.ok) {
+        const err = await res.json();
+        document.getElementById('upload-err').textContent = `Error en ${file.name}: ${err.detail}`;
+        continue;
+      }
+      const data = await res.json();
+      for (const e of data.entregas) {
+        const key = e.entrega + '|' + file.name;
+        if (!ENTREGAS.find(x => x._key === key)) {
+          e._key = key;
+          ENTREGAS.push(e);
+          for (const it of e.items)
+            DB.push({ ...it, entrega: e.entrega, orden: e.orden,
+                      fecha: e.fecha, tipo: e.tipo, fileName: file.name });
+        }
+      }
+      addChip(file.name);
+    } catch(err) {
+      document.getElementById('upload-err').textContent = `Error de red: ${err.message}`;
+    }
+  }
+
+  setP(100, 'Completado');
+  setTimeout(() => document.getElementById('prog-wrap').style.display = 'none', 800);
+  rebuildAll();
+}
+
+function setP(pct, lbl) {
+  document.getElementById('prog').style.width = pct + '%';
+  document.getElementById('prog-lbl').textContent = lbl;
+}
+
+function addChip(name) {
+  const c = document.getElementById('chips');
+  if ([...c.children].some(x => x.dataset.name === name)) return;
+  const chip = document.createElement('div');
+  chip.className = 'chip'; chip.dataset.name = name;
+  chip.innerHTML = name.replace('.pdf','') + `<button onclick="removeFile('${name}')">×</button>`;
+  c.appendChild(chip);
+}
+
+function removeFile(name) {
+  ENTREGAS = ENTREGAS.filter(e => e.fileName !== name);
+  DB = DB.filter(r => r.fileName !== name);
+  const chip = [...document.getElementById('chips').children].find(c => c.dataset.name === name);
+  if (chip) chip.remove();
+  if (!DB.length) document.getElementById('empty-state').style.display = 'block';
+  rebuildAll();
+}
+
+function clearAll() {
+  if (!DB.length) return;
+  if (!confirm('¿Limpiar todos los archivos y la base de datos?')) return;
+  DB = []; ENTREGAS = [];
+  document.getElementById('chips').innerHTML = '';
+  document.getElementById('upload-result').style.display = 'none';
+  document.getElementById('empty-state').style.display = 'block';
+  document.getElementById('fi').value = '';
+  renderPreview(); renderSummary(); renderDB(); buildFilters();
+}
+
+// ── REBUILD ───────────────────────────────────────────────────────────────────
+function rebuildAll() {
+  renderStats();
+  renderPreview();
+  renderSummary();
+  renderDB();
+  buildFilters();
+  if (DB.length) document.getElementById('upload-result').style.display = 'block';
+
+  document.getElementById('dl-excel').onclick = async () => {
+    toast('Generando Excel...');
+    try {
+      const res = await fetch(`${API}/export`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ entregas: ENTREGAS, filename: 'PL-Manager.xlsx' })
+      });
+      if (!res.ok) { toast('Error al generar Excel'); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url;
+      a.download = 'PL-Manager.xlsx'; a.click();
+      URL.revokeObjectURL(url);
+      toast('Excel descargado ✓');
+    } catch(e) { toast('Error: ' + e.message); }
+  };
+}
+
+function renderStats() {
+  const tkg = DB.reduce((a,r) => a+(r.kg||0),0);
+  const tb  = ENTREGAS.reduce((a,e) => a+(e.bultos||0),0);
+  const nC  = ENTREGAS.filter(e => e.tipo==='COLON').length;
+  const nW  = ENTREGAS.filter(e => e.tipo==='WH').length;
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="stat-n">${ENTREGAS.length}</div><div class="stat-l">Entregas</div></div>
+    <div class="stat"><div class="stat-n">${nC}</div><div class="stat-l">COLON/OUT</div></div>
+    <div class="stat"><div class="stat-n">${nW}</div><div class="stat-l">WH/OUT</div></div>
+    <div class="stat"><div class="stat-n">${DB.length}</div><div class="stat-l">Registros</div></div>
+    <div class="stat"><div class="stat-n">${tkg.toFixed(1)}</div><div class="stat-l">kg totales</div></div>
+    <div class="stat"><div class="stat-n">${tb}</div><div class="stat-l">Bultos</div></div>`;
+}
+
+// ── PREVIEW ───────────────────────────────────────────────────────────────────
+function renderPreview() {
+  const el = document.getElementById('preview-content');
+  if (!ENTREGAS.length) { el.innerHTML = '<div class="empty"><div class="empty-icon">👁</div><h3>Sin datos</h3></div>'; return; }
+  el.innerHTML = ENTREGAS.map(e => e.tipo === 'WH' ? renderWH(e) : renderCOLON(e)).join('');
+}
+
+function renderCOLON(e) {
+  const tkg=e.items.reduce((a,i)=>a+(i.kg||0),0);
+  const tm3=e.items.reduce((a,i)=>a+(i.m3||0),0);
+  const tq=e.items.reduce((a,i)=>a+(i.cantidad||0),0);
+  const tb=e.items.reduce((a,i)=>a+(i.bultos||0),0);
+  return `<div class="ent-block">
+    <div class="ent-hdr" style="background:#1F4E79">
+      <div class="ent-hdr-item"><span>Entrega</span><br><strong>${e.entrega}</strong></div>
+      <div class="ent-hdr-item"><span>Orden</span><br><strong>${e.orden}</strong></div>
+      <div class="ent-hdr-item"><span>Almacén</span><br><strong>${e.almacen||'PERFECT PTY'}</strong></div>
+      <div class="ent-hdr-item"><span>Estado</span><br><strong>Hecho</strong></div>
+      <div class="ent-hdr-item"><span>Fecha</span><br><strong>${e.fecha}</strong></div>
+      <div class="ent-hdr-item"><span>Cliente</span><br><strong>${e.cliente||'—'}</strong></div>
+    </div>
+    <div class="tbl-wrap" style="border:none;border-radius:0"><table>
+      <thead><tr><th style="min-width:120px">Producto</th><th>Cantidad</th><th>Marca</th>
+        <th>L</th><th>W</th><th>H</th><th>PZxB</th><th>kg</th><th>m³</th>
+        <th>Bultos</th><th>N°Bultos</th><th>Ubicación</th></tr></thead>
+      <tbody>
+        ${e.items.map((it,ri)=>{const dim=it.l||it.w||it.h;const bg=ri%2?'#f7fafd':'#fff';return`<tr style="background:${bg}">
+          <td style="background:${bg}"><strong style="font-size:11px">[${it.codigo}]</strong><br>
+            <span style="font-size:11px;color:#6b7280">${it.descripcion||''}</span></td>
+          <td style="text-align:center;background:${bg}">${it.cantidad}</td>
+          <td style="background:${bg}"><span class="badge bc">${it.marca||'—'}</span></td>
+          <td style="text-align:right;background:${bg}">${dim?it.l:''}</td>
+          <td style="text-align:right;background:${bg}">${dim?it.w:''}</td>
+          <td style="text-align:right;background:${bg}">${dim?it.h:''}</td>
+          <td style="text-align:center;background:${bg}">${it.pzb||''}</td>
+          <td style="text-align:right;background:${bg}">${it.kg||''}</td>
+          <td style="text-align:right;background:${bg}">${it.m3||''}</td>
+          <td style="text-align:center;background:${bg}">${it.bultos||''}</td>
+          <td style="text-align:center;background:${bg}">${it.nbultos||''}</td>
+          <td style="background:${bg}">${it.ubicacion||''}</td>
+        </tr>`;}).join('')}
+        <tr class="total-row"><td>TOTAL</td><td style="text-align:center">${tq}</td><td></td>
+          <td></td><td></td><td></td><td></td>
+          <td style="text-align:right">${tkg.toFixed(3)}</td>
+          <td style="text-align:right">${tm3.toFixed(4)}</td>
+          <td style="text-align:center">${tb}</td><td></td><td></td></tr>
+      </tbody></table></div></div>`;
+}
+
+function renderWH(e) {
+  const tkg=e.items.reduce((a,i)=>a+(i.kg||0),0);
+  const tm3=e.items.reduce((a,i)=>a+(i.m3||0),0);
+  const tq=e.items.reduce((a,i)=>a+(i.cantidad||0),0);
+  return `<div class="ent-block">
+    <div class="ent-hdr" style="background:#0F6E56">
+      <div class="ent-hdr-item"><span>Albarán</span><br><strong>${e.entrega}</strong></div>
+      <div class="ent-hdr-item"><span>Orden</span><br><strong>${e.orden}</strong></div>
+      <div class="ent-hdr-item"><span>Estado</span><br><strong>Hecho</strong></div>
+      <div class="ent-hdr-item"><span>Cita agendada</span><br><strong>${e.fecha}</strong></div>
+      <div class="ent-hdr-item"><span>Cliente</span><br><strong>${e.cliente||'—'}</strong></div>
+      <div class="ent-hdr-item"><span>Vendedor</span><br><strong>${e.vendedor||''}</strong></div>
+    </div>
+    <div class="tbl-wrap" style="border:none;border-radius:0"><table>
+      <thead><tr><th style="min-width:160px">Producto</th><th>Cantidad</th>
+        <th>L</th><th>W</th><th>H</th><th>PZxB</th><th>kg</th><th>m3</th>
+        <th>Bultos</th><th>N°Bultos</th><th>Desde</th></tr></thead>
+      <tbody>
+        ${e.items.map((it,ri)=>{const dim=it.l||it.w||it.h;const bg=ri%2?'#f0fff8':'#fff';return`<tr style="background:${bg}">
+          <td style="background:${bg}"><strong style="font-size:11px">[${it.codigo}]</strong><br>
+            <span style="font-size:11px;color:#6b7280">${it.descripcion||''}</span></td>
+          <td style="text-align:center;background:${bg}">${it.cantidad}<br>
+            <span style="font-size:10px;color:#9ca3af">Unidades</span></td>
+          <td style="text-align:right;background:${bg}">${dim?it.l:'0,0'}</td>
+          <td style="text-align:right;background:${bg}">${dim?it.w:'0,0'}</td>
+          <td style="text-align:right;background:${bg}">${dim?it.h:'0,0'}</td>
+          <td style="text-align:center;background:${bg}">${it.pzb||''}</td>
+          <td style="text-align:right;background:${bg}">${it.kg??'0,00'}</td>
+          <td style="text-align:right;background:${bg}">${it.m3??'0,0000'}</td>
+          <td style="text-align:center;background:${bg}">${it.bultos||'0'}</td>
+          <td style="text-align:center;background:${bg}">${it.nbultos||''}</td>
+          <td style="background:${bg};font-size:11px">${it.desde||''}</td>
+        </tr>`;}).join('')}
+        <tr class="total-row"><td>TOTAL</td><td style="text-align:center">${tq}</td>
+          <td></td><td></td><td></td><td></td>
+          <td style="text-align:right">${tkg.toFixed(3)}</td>
+          <td style="text-align:right">${tm3.toFixed(4)}</td>
+          <td></td><td></td><td></td></tr>
+      </tbody></table></div></div>`;
+}
+
+// ── SUMMARY ───────────────────────────────────────────────────────────────────
+function renderSummary() {
+  const el = document.getElementById('summary-content');
+  if (!ENTREGAS.length) { el.innerHTML = '<div class="empty"><div class="empty-icon">📊</div><h3>Sin datos</h3></div>'; return; }
+  const tkg=DB.reduce((a,r)=>a+(r.kg||0),0), tm3=DB.reduce((a,r)=>a+(r.m3||0),0);
+  const tb=ENTREGAS.reduce((a,e)=>a+(e.bultos||0),0);
+  el.innerHTML = `
+  <div class="stat-grid">
+    <div class="stat"><div class="stat-n">${ENTREGAS.length}</div><div class="stat-l">Entregas</div></div>
+    <div class="stat"><div class="stat-n">${DB.length}</div><div class="stat-l">Líneas</div></div>
+    <div class="stat"><div class="stat-n">${tkg.toFixed(1)}</div><div class="stat-l">kg totales</div></div>
+    <div class="stat"><div class="stat-n">${tb}</div><div class="stat-l">Bultos totales</div></div>
+  </div>
+  <div class="card"><div class="card-title">Por entrega</div><div class="tbl-wrap"><table>
+    <thead><tr><th>Tipo</th><th>Entrega</th><th>Orden</th><th>Fecha</th><th>Cliente</th>
+      <th>Líneas</th><th>Unidades</th><th>kg</th><th>m³</th><th>Bultos</th></tr></thead>
+    <tbody>
+      ${ENTREGAS.map((e,ri)=>{
+        const ekg=e.items.reduce((a,i)=>a+(i.kg||0),0);
+        const em3=e.items.reduce((a,i)=>a+(i.m3||0),0);
+        const eq=e.items.reduce((a,i)=>a+(i.cantidad||0),0);
+        const bg=ri%2?'#f7fafd':'#fff';
+        return`<tr><td style="background:${bg}"><span class="badge ${e.tipo==='WH'?'bg':'bc'}">${e.tipo}</span></td>
+          <td style="font-size:11px;background:${bg}">${e.entrega}</td>
+          <td style="background:${bg}">${e.orden}</td><td style="background:${bg}">${e.fecha}</td>
+          <td style="font-size:11px;background:${bg}">${e.cliente||'—'}</td>
+          <td style="text-align:right;background:${bg}">${e.items.length}</td>
+          <td style="text-align:right;background:${bg}">${eq}</td>
+          <td style="text-align:right;background:${bg}">${ekg.toFixed(3)}</td>
+          <td style="text-align:right;background:${bg}">${em3.toFixed(4)}</td>
+          <td style="text-align:right;background:${bg}">${e.bultos}</td></tr>`;}).join('')}
+      <tr class="total-row"><td colspan="5">TOTAL</td>
+        <td style="text-align:right">${DB.length}</td>
+        <td style="text-align:right">${DB.reduce((a,r)=>a+(r.cantidad||0),0)}</td>
+        <td style="text-align:right">${tkg.toFixed(3)}</td>
+        <td style="text-align:right">${tm3.toFixed(4)}</td>
+        <td style="text-align:right">${tb}</td></tr>
+    </tbody></table></div></div>`;
+}
+
+// ── DB ────────────────────────────────────────────────────────────────────────
+function buildFilters() {
+  const eS = document.getElementById('db-ent'), mS = document.getElementById('db-marca');
+  const ce = eS.value, cm = mS.value;
+  eS.innerHTML = '<option value="">Todas las entregas</option>';
+  mS.innerHTML = '<option value="">Todas las marcas</option>';
+  [...new Set(ENTREGAS.map(e => e.entrega))].forEach(e =>
+    eS.innerHTML += `<option value="${e}" ${ce===e?'selected':''}>${e}</option>`);
+  [...new Set(DB.map(r => r.marca).filter(Boolean))].forEach(m =>
+    mS.innerHTML += `<option value="${m}" ${cm===m?'selected':''}>${m}</option>`);
+}
+
+function getFiltered() {
+  const s=document.getElementById('db-search').value.toLowerCase();
+  const fE=document.getElementById('db-ent').value, fM=document.getElementById('db-marca').value;
+  return DB.filter(r => {
+    if(fE && r.entrega!==fE) return false;
+    if(fM && r.marca!==fM) return false;
+    if(s && !JSON.stringify(r).toLowerCase().includes(s)) return false;
+    return true;
+  });
+}
+
+function renderDB() {
+  const f=getFiltered();
+  document.getElementById('db-count').textContent=f.length+' registros';
+  const tbody=document.getElementById('db-body');
+  if(!f.length){tbody.innerHTML='<tr><td colspan="16"><div class="empty" style="padding:2rem"><div class="empty-icon">🔍</div><h3>Sin resultados</h3></div></td></tr>';return;}
+  tbody.innerHTML=f.map((r,ri)=>{const bg=ri%2?'#f7fafd':'#fff';return`<tr>
+    <td style="background:${bg}"><span class="badge ${r.tipo==='WH'?'bg':'bc'}" style="font-size:10px">${r.entrega.replace('COLON/OUT/','').replace('WH/OUT/','')}</span></td>
+    <td style="background:${bg}">${r.orden}</td><td style="background:${bg}">${r.fecha}</td>
+    <td style="font-family:monospace;font-size:11px;background:${bg}">${r.codigo}</td>
+    <td style="max-width:200px;font-size:11px;background:${bg}">${r.descripcion||''}</td>
+    <td style="text-align:center;background:${bg}">${r.cantidad}</td>
+    <td style="background:${bg}"><span class="badge ${r.marca==='PERFECT'?'bc':r.marca?'bgr':''}" style="font-size:10px">${r.marca||'—'}</span></td>
+    <td style="text-align:right;background:${bg}">${r.l??''}</td><td style="text-align:right;background:${bg}">${r.w??''}</td><td style="text-align:right;background:${bg}">${r.h??''}</td>
+    <td style="text-align:center;background:${bg}">${r.pzb??''}</td>
+    <td style="text-align:right;background:${bg}">${r.kg??''}</td><td style="text-align:right;background:${bg}">${r.m3??''}</td>
+    <td style="text-align:center;background:${bg}">${r.bultos??''}</td>
+    <td style="text-align:center;background:${bg}">${r.nbultos??''}</td>
+    <td style="font-size:11px;background:${bg}">${r.ubicacion||r.desde||''}</td>
+  </tr>`;}).join('');
+}
+
+function exportCSV() {
+  const rows=getFiltered();
+  const hdr=['Tipo','Entrega','Orden','Fecha','Archivo','Código','Descripción','Cantidad','Marca','L','W','H','PZxB','kg','m³','Bultos','N°Bultos','Ubicación'];
+  const csv=[hdr,...rows.map(r=>[r.tipo,r.entrega,r.orden,r.fecha,r.fileName,r.codigo,r.descripcion,r.cantidad,r.marca||'',r.l,r.w,r.h,r.pzb,r.kg,r.m3,r.bultos,r.nbultos,r.ubicacion||r.desde||''])]
+    .map(row=>row.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\n');
+  const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='DB.csv';a.click();
+  toast('CSV descargado ✓');
+}
+
+async function exportDBExcel() {
+  toast('Generando Excel...');
+  const filtered_entregas = ENTREGAS.filter(e =>
+    getFiltered().some(r => r.entrega === e.entrega));
+  try {
+    const res = await fetch(`${API}/export`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ entregas: filtered_entregas, filename: 'DB-packing-list.xlsx' })
+    });
+    const blob = await res.blob();
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'DB-packing-list.xlsx'; a.click();
+    toast('Excel descargado ✓');
+  } catch(e) { toast('Error: ' + e.message); }
+}
+
+// ── PWA ───────────────────────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault(); deferredPrompt = e;
+  document.getElementById('install-bar').style.display = 'flex';
+});
+document.getElementById('install-btn').addEventListener('click', async () => {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  const { outcome } = await deferredPrompt.userChoice;
+  if (outcome === 'accepted') document.getElementById('install-bar').style.display = 'none';
+  deferredPrompt = null;
+});
+</script>
+</body>
+</html>

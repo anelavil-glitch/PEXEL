@@ -1,0 +1,16 @@
+{
+  "name": "Packing List Manager — PERFECT PTY",
+  "short_name": "PL Manager",
+  "description": "Convierte packing lists PDF de PERFECT PTY a Excel con base de datos",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f9fafb",
+  "theme_color": "#1a56db",
+  "orientation": "any",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "categories": ["productivity", "utilities"],
+  "lang": "es"
+}
