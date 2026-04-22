@@ -161,7 +161,7 @@ const Parser = (() => {
       const prevCx = i>0?_sorted[i-1][1]:cx-100;
       const nextCx = i<_sorted.length-1?_sorted[i+1][1]:Infinity;
       const left   = (prevCx+cx)/2;
-      const right  = nextCx===Infinity?Infinity:cx+(nextCx-cx)*0.82;
+      const right  = nextCx===Infinity?Infinity:cx+(nextCx-cx)*0.70;
       return `${f}:[${Math.round(left)}–${right===Infinity?'∞':Math.round(right)}]`;
     });
     console.log('[Parser] Zones:', zones.join('  '));
@@ -170,9 +170,12 @@ const Parser = (() => {
 
   function assignCol(x, cols) {
     // Frontera izquierda = punto medio con la columna anterior
-    // Frontera derecha   = cx + 80% del gap hasta la siguiente columna
-    //   → más amplia que el midpoint (captura right-aligned numbers cerca del borde derecho)
-    //   → sin llegar al encabezado siguiente (evita el solapamiento total de "right = nextCx")
+    // Frontera derecha   = cx + 70% del gap hasta la siguiente columna
+    //   • Más amplia que el punto medio puro (50%) para capturar números
+    //     right-aligned que aparecen cerca del borde derecho de su celda.
+    //   • NO llega al encabezado siguiente: evita que números estrechos
+    //     de la columna N+1 (que empiezan cerca del borde derecho de N)
+    //     sean capturados por la zona N.
     const sorted = Object.entries(cols)
       .filter(([f]) => f !== 'producto')
       .sort((a, b) => a[1] - b[1]);
@@ -181,7 +184,7 @@ const Parser = (() => {
       const prevCx = i > 0 ? sorted[i - 1][1] : cx - 100;
       const nextCx = i < sorted.length - 1 ? sorted[i + 1][1] : Infinity;
       const left  = (prevCx + cx) / 2;
-      const right = nextCx === Infinity ? Infinity : cx + (nextCx - cx) * 0.82;
+      const right = nextCx === Infinity ? Infinity : cx + (nextCx - cx) * 0.70;
       if (x >= left && x < right) return field;
     }
     return null;
@@ -402,15 +405,19 @@ const Parser = (() => {
       const num = parseFloat(str.replace(',', '.'));
 
       switch (col) {
-        case 'cantidad':  cur.quantity  = isNaN(num) ? 0 : num; break;
-        case 'marca':     cur.brand     = str;                   break;
-        case 'l':         cur.l         = isNaN(num) ? 0 : num; break;
-        case 'w':         cur.w         = isNaN(num) ? 0 : num; break;
-        case 'h':         cur.h         = isNaN(num) ? 0 : num; break;
-        case 'pzxb':      cur.pzxb      = isNaN(num) ? 0 : num; break;
-        case 'kg':        cur.kg        = isNaN(num) ? 0 : num; break;
-        case 'm3':        cur.m3        = isNaN(num) ? 0 : num; break;
-        case 'bultos':    cur.bultos    = isNaN(num) ? 0 : num; break;
+        // First-wins para campos numéricos: el primer token (x más pequeño = número
+        // más ancho = más a la izquierda, valor correcto en columnas right-aligned)
+        // gana; si un token estrecho de la columna adyacente "se cuela" en esta zona
+        // llega después y no sobreescribe el valor ya correcto.
+        case 'cantidad':  if (!cur.quantity)  cur.quantity  = isNaN(num) ? 0 : num; break;
+        case 'marca':     if (!cur.brand)     cur.brand     = str;                   break;
+        case 'l':         if (!cur.l)         cur.l         = isNaN(num) ? 0 : num; break;
+        case 'w':         if (!cur.w)         cur.w         = isNaN(num) ? 0 : num; break;
+        case 'h':         if (!cur.h)         cur.h         = isNaN(num) ? 0 : num; break;
+        case 'pzxb':      if (!cur.pzxb)      cur.pzxb      = isNaN(num) ? 0 : num; break;
+        case 'kg':        if (!cur.kg)        cur.kg        = isNaN(num) ? 0 : num; break;
+        case 'm3':        if (!cur.m3)        cur.m3        = isNaN(num) ? 0 : num; break;
+        case 'bultos':    if (!cur.bultos)    cur.bultos    = isNaN(num) ? 0 : num; break;
         case 'nbultos':
           // N°Bultos = dígitos/guiones ("1","-","4" → "1-4"); texto con letras = Desde
           if (/^[\d\s\-]+$/.test(str)) nBultosParts.push(str);
