@@ -152,25 +152,36 @@ const Parser = (() => {
     const tipo = cols.marca ? 'A (con Marca)' : 'B (sin Marca)';
     console.log(`[Parser] Tipo detectado: ${tipo}`);
     console.log('[Parser] cols:', JSON.stringify(cols));
+    // DEBUG: show each header token with its X position
+    console.log('[Parser] Header tokens:',
+      tokens.map(t => `"${t.str}"@${Math.round(t.x)}`).join('  |  '));
+    // DEBUG: show computed zone boundaries
+    const _sorted = Object.entries(cols).filter(([f]) => f !== 'producto').sort((a,b)=>a[1]-b[1]);
+    const zones = _sorted.map(([f,cx],i)=>{
+      const prevCx = i>0?_sorted[i-1][1]:cx-100;
+      const nextCx = i<_sorted.length-1?_sorted[i+1][1]:Infinity;
+      const left   = (prevCx+cx)/2;
+      const right  = nextCx===Infinity?Infinity:cx+(nextCx-cx)*0.82;
+      return `${f}:[${Math.round(left)}–${right===Infinity?'∞':Math.round(right)}]`;
+    });
+    console.log('[Parser] Zones:', zones.join('  '));
     return cols;
   }
 
   function assignCol(x, cols) {
     // Frontera izquierda = punto medio con la columna anterior
-    //   (centra la zona entre los dos encabezados para texto left-aligned).
-    // Frontera derecha   = posición del encabezado de la columna SIGUIENTE
-    //   (captura números right-aligned que aparecen cerca del borde derecho
-    //    de su celda, justo antes del encabezado siguiente).
-    // Con "first-match-wins" (izq→der) no hay ambigüedad en la zona solapada.
+    // Frontera derecha   = cx + 80% del gap hasta la siguiente columna
+    //   → más amplia que el midpoint (captura right-aligned numbers cerca del borde derecho)
+    //   → sin llegar al encabezado siguiente (evita el solapamiento total de "right = nextCx")
     const sorted = Object.entries(cols)
       .filter(([f]) => f !== 'producto')
       .sort((a, b) => a[1] - b[1]);
     for (let i = 0; i < sorted.length; i++) {
       const [field, cx] = sorted[i];
-      const prevCx = i > 0 ? sorted[i - 1][1] : cx - 100;  // margen izq amplio para la 1ª col
+      const prevCx = i > 0 ? sorted[i - 1][1] : cx - 100;
       const nextCx = i < sorted.length - 1 ? sorted[i + 1][1] : Infinity;
       const left  = (prevCx + cx) / 2;
-      const right = nextCx;   // llega hasta el encabezado siguiente (no el midpoint)
+      const right = nextCx === Infinity ? Infinity : cx + (nextCx - cx) * 0.82;
       if (x >= left && x < right) return field;
     }
     return null;
@@ -378,6 +389,8 @@ const Parser = (() => {
 
   function applyDataTokens(cur, rightToks, cols) {
     const nBultosParts = [];
+    console.log(`[applyData] code=${cur.code}  tokens:`,
+      rightToks.map(t => `"${t.str.trim()}"@${Math.round(t.transform[4])}→${assignCol(t.transform[4],cols)||'?'}`).join('  '));
 
     for (const t of rightToks) {
       const x   = t.transform[4];
