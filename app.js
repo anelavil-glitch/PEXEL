@@ -161,7 +161,7 @@ const Parser = (() => {
       const prevCx = i>0?_sorted[i-1][1]:cx-100;
       const nextCx = i<_sorted.length-1?_sorted[i+1][1]:Infinity;
       const left   = (prevCx+cx)/2;
-      const right  = nextCx===Infinity?Infinity:cx+(nextCx-cx)*0.70;
+      const right  = nextCx;
       return `${f}:[${Math.round(left)}–${right===Infinity?'∞':Math.round(right)}]`;
     });
     console.log('[Parser] Zones:', zones.join('  '));
@@ -169,13 +169,20 @@ const Parser = (() => {
   }
 
   function assignCol(x, cols) {
-    // Frontera izquierda = punto medio con la columna anterior
-    // Frontera derecha   = cx + 70% del gap hasta la siguiente columna
-    //   • Más amplia que el punto medio puro (50%) para capturar números
-    //     right-aligned que aparecen cerca del borde derecho de su celda.
-    //   • NO llega al encabezado siguiente: evita que números estrechos
-    //     de la columna N+1 (que empiezan cerca del borde derecho de N)
-    //     sean capturados por la zona N.
+    // Frontera izquierda = punto medio con la columna anterior.
+    // Frontera derecha   = posición del encabezado de la columna SIGUIENTE (right = nextCx).
+    //
+    // ¿Por qué right = nextCx y no midpoint?
+    //   Los números right-aligned empiezan cerca del BORDE DERECHO de su celda.
+    //   Para un número estrecho ("5") eso puede ser x ≈ nextCx - 5pt, que ya supera
+    //   el midpoint. Con right = nextCx capturamos esos tokens sin perderlos.
+    //
+    // ¿Por qué no se "cuela" el token de la columna adyacente?
+    //   Los tokens de la columna N+1 (texto left-aligned como "FUKA", o números
+    //   right-aligned cuya celda empieza en nextCx) tienen x >= nextCx.
+    //   Los únicos que podrían colarse son tokens decimales separados (p.ej. "11"
+    //   de "11.000"), pero applyDataTokens usa first-wins, así que el valor correcto
+    //   (número más ancho, x más bajo) ya fue asignado y el token tardío se ignora.
     const sorted = Object.entries(cols)
       .filter(([f]) => f !== 'producto')
       .sort((a, b) => a[1] - b[1]);
@@ -184,7 +191,7 @@ const Parser = (() => {
       const prevCx = i > 0 ? sorted[i - 1][1] : cx - 100;
       const nextCx = i < sorted.length - 1 ? sorted[i + 1][1] : Infinity;
       const left  = (prevCx + cx) / 2;
-      const right = nextCx === Infinity ? Infinity : cx + (nextCx - cx) * 0.70;
+      const right = nextCx;   // captura números right-aligned cerca del borde derecho de la celda
       if (x >= left && x < right) return field;
     }
     return null;

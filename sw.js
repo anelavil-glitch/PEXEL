@@ -45,7 +45,10 @@ self.addEventListener('fetch', e => {
     e.respondWith(
       fetch(e.request)
         .then(res => {
-          caches.open(CACHE_CDN).then(c => c.put(e.request, res.clone()));
+          // Clonar ANTES de devolver: el browser consume el body original
+          // inmediatamente; si clonamos después el body ya fue leído → error.
+          const copy = res.clone();
+          caches.open(CACHE_CDN).then(c => c.put(e.request, copy));
           return res;
         })
         .catch(() => caches.match(e.request))
@@ -58,7 +61,8 @@ self.addEventListener('fetch', e => {
     caches.match(e.request).then(cached => {
       const fresh = fetch(e.request).then(res => {
         if (res.ok) {
-          caches.open(CACHE_STATIC).then(c => c.put(e.request, res.clone()));
+          const copy = res.clone();
+          caches.open(CACHE_STATIC).then(c => c.put(e.request, copy));
         }
         return res;
       });
