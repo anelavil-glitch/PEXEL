@@ -1,7 +1,7 @@
 {
-  "name": "Packing List Manager",
+  "name": "Packing List Manager — PERFECT PTY",
   "short_name": "PackingList",
-  "description": "Gestión de packing lists PERFECT PTY — exportación de amortiguadores a Bolivia",
+  "description": "Gestión de packing lists PDF con exportación a Excel",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

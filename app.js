@@ -52,6 +52,22 @@ const DB = (() => {
     }));
   }
 
+  function getOne(id) {
+    return open().then(db => new Promise((res, rej) => {
+      const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(id);
+      req.onsuccess = e => res(e.target.result || null);
+      req.onerror   = e => rej(e.target.error);
+    }));
+  }
+
+  function count() {
+    return open().then(db => new Promise((res, rej) => {
+      const req = db.transaction(STORE, 'readonly').objectStore(STORE).count();
+      req.onsuccess = e => res(e.target.result);
+      req.onerror   = e => rej(e.target.error);
+    }));
+  }
+
   function clear() {
     return open().then(db => new Promise((res, rej) => {
       const req = db.transaction(STORE, 'readwrite').objectStore(STORE).clear();
@@ -60,7 +76,7 @@ const DB = (() => {
     }));
   }
 
-  return { open, getAll, putMany, remove, clear };
+  return { open, getAll, getOne, count, putMany, remove, clear };
 })();
 
 
@@ -855,13 +871,16 @@ const App = {
   async init() {
     if ('serviceWorker' in navigator)
       navigator.serviceWorker.register('./sw.js').catch(() => {});
+
+    // Sesión siempre limpia al abrir — no se carga la BD automáticamente.
+    // Se muestra un banner si hay registros guardados para que el usuario decida.
     try {
-      const saved = await DB.getAll();
-      if (saved.length) {
-        this.deliveries = saved;
-        notify(`${saved.length} entrega(s) restaurada(s) desde BD local`, 'info');
-      }
-    } catch (e) { console.warn('IndexedDB no disponible:', e.message); }
+      const n = await DB.count();
+      this._dbCount = n;
+    } catch (e) {
+      console.warn('IndexedDB no disponible:', e.message);
+      this._dbCount = 0;
+    }
 
     this.bindNav();
     this.bindUpload();
@@ -871,6 +890,7 @@ const App = {
     document.getElementById('btn-clear-db')
       .addEventListener('click', () => this.clearDB());
     this.renderCurrentView();
+    this.renderHistoryBanner();
   },
 
   bindNav() {
@@ -893,6 +913,44 @@ const App = {
       case 'pdf-view': this.renderPDFView();  break;
       case 'summary':  this.renderSummary();  break;
       case 'database': this.renderDatabase(); break;
+    }
+  },
+
+  renderHistoryBanner() {
+    const wrap = document.getElementById('history-banner-wrap');
+    if (!wrap) return;
+    const n = this._dbCount || 0;
+    if (!n) { wrap.innerHTML = ''; return; }
+    wrap.innerHTML = `
+      <div class="history-banner">
+        <span>📂</span>
+        <span>Hay <strong>${n} entrega(s)</strong> guardada(s) en la BD local de este dispositivo.</span>
+        <span class="hb-spacer"></span>
+        <button class="btn btn-primary" id="btn-load-history" style="margin:0;font-size:12px;padding:6px 14px">
+          ↓ Cargar historial
+        </button>
+        <button class="btn btn-danger" id="btn-clear-history" style="margin:0;font-size:12px;padding:6px 14px">
+          🗑 Borrar BD
+        </button>
+      </div>`;
+    document.getElementById('btn-load-history').addEventListener('click', () => this.loadHistory());
+    document.getElementById('btn-clear-history').addEventListener('click', () => this.clearDB());
+  },
+
+  async loadHistory() {
+    try {
+      const saved = await DB.getAll();
+      if (!saved.length) { notify('La BD está vacía', 'info'); return; }
+      const map = Object.fromEntries(this.deliveries.map(d => [d.id, d]));
+      saved.forEach(d => { map[d.id] = d; });
+      this.deliveries  = Object.values(map);
+      this._dbCount    = saved.length;
+      notify(`${saved.length} entrega(s) cargada(s) desde historial`, 'success');
+      this.renderHistoryBanner();
+      this.renderCurrentView();
+      this.renderUpload();
+    } catch (e) {
+      notify('Error al leer la BD: ' + e.message, 'error');
     }
   },
 
@@ -920,6 +978,31 @@ const App = {
     });
   },
 
+  // ── Modal de duplicados (promise-based) ───────────────────────────
+  _dupResolve: null,
+  showDuplicateModal(incoming, existing) {
+    return new Promise(resolve => {
+      this._dupResolve = resolve;
+      const fmt2 = s => s ? String(s) : '—';
+      document.getElementById('modal-dup-detail').innerHTML =
+        `<b>Código:</b> ${esc(existing.deliveryCode)}<br>` +
+        `<b>Fecha:</b> ${fmt2(existing.date)} &nbsp;·&nbsp; <b>Cliente:</b> ${fmt2(existing.client)}<br>` +
+        `<b>Productos:</b> ${existing.products?.length ?? 0} &nbsp;·&nbsp; ` +
+        `<b>Importado:</b> ${new Date(existing.loadedAt).toLocaleString('es-PA')}<br>` +
+        `<b>Archivo original:</b> ${fmt2(existing.sourceFile)}`;
+      document.getElementById('modal-dup-new').innerHTML =
+        `<strong>Nuevo archivo:</strong> ${esc(incoming.sourceFile)} &nbsp;·&nbsp; ` +
+        `${incoming.products?.length ?? 0} producto(s). ¿Deseas reemplazarlo?`;
+      document.getElementById('modal-dup-all').checked = false;
+      document.getElementById('modal-dup').style.display = 'flex';
+    });
+  },
+  _closeDupModal(action) {
+    const applyAll = document.getElementById('modal-dup-all').checked;
+    document.getElementById('modal-dup').style.display = 'none';
+    if (this._dupResolve) { this._dupResolve({ action, applyAll }); this._dupResolve = null; }
+  },
+
   async processFiles(files) {
     const area = document.getElementById('progress-area');
     area.innerHTML = `<div class="progress-wrap">
@@ -927,29 +1010,72 @@ const App = {
       <div class="progress-bar"><div class="progress-bar-fill" id="prog-fill" style="width:0%"></div></div>
     </div>`;
 
-    const added = [];
+    // Bind modal buttons once (idempotent)
+    if (!this._dupModalBound) {
+      document.getElementById('modal-dup-skip')
+        .addEventListener('click', () => this._closeDupModal('skip'));
+      document.getElementById('modal-dup-replace')
+        .addEventListener('click', () => this._closeDupModal('replace'));
+      this._dupModalBound = true;
+    }
+
+    const toSave = [];
+    let bulkAction = null; // 'skip' | 'replace' — si el usuario marcó "aplicar a todos"
+
     for (let i = 0; i < files.length; i++) {
-      document.getElementById('prog-label').textContent = `Procesando ${i+1}/${files.length}: ${files[i].name}`;
-      document.getElementById('prog-fill').style.width  = `${Math.round((i/files.length)*100)}%`;
+      document.getElementById('prog-label').textContent =
+        `Procesando ${i+1}/${files.length}: ${files[i].name}`;
+      document.getElementById('prog-fill').style.width =
+        `${Math.round((i / files.length) * 100)}%`;
       try {
         const buf  = await files[i].arrayBuffer();
         const devs = await Parser.parsePDF(buf, files[i].name);
-        added.push(...devs);
-        notify(`${files[i].name}: ${devs.length} entrega(s)`, devs.length ? 'success' : 'error');
+
+        for (const dev of devs) {
+          // ── Verificar duplicado en BD Y en sesión actual ──────────
+          const inSession = this.deliveries.find(d => d.id === dev.id);
+          const inDB      = inSession ? null : await DB.getOne(dev.id).catch(() => null);
+          const existing  = inSession || inDB;
+
+          if (existing) {
+            let action = bulkAction;
+            if (!action) {
+              const result = await this.showDuplicateModal(dev, existing);
+              action = result.action;
+              if (result.applyAll) bulkAction = action;
+            }
+            if (action === 'skip') {
+              notify(`Omitido: ${dev.deliveryCode} (ya existe)`, 'info');
+              continue;
+            }
+            // 'replace' → continúa y sobreescribe
+            notify(`Reemplazado: ${dev.deliveryCode}`, 'info');
+          }
+
+          toSave.push(dev);
+        }
+
+        notify(`${files[i].name}: ${devs.length} entrega(s) procesada(s)`,
+               devs.length ? 'success' : 'error');
       } catch (err) {
         console.error(err);
         notify(`Error en "${files[i].name}": ${err.message}`, 'error');
       }
     }
+
     document.getElementById('prog-fill').style.width = '100%';
     setTimeout(() => { area.innerHTML = ''; }, 1400);
 
-    if (added.length) {
+    if (toSave.length) {
       const map = Object.fromEntries(this.deliveries.map(d => [d.id, d]));
-      added.forEach(d => { map[d.id] = d; });
+      toSave.forEach(d => { map[d.id] = d; });
       this.deliveries = Object.values(map);
-      try { await DB.putMany(added); } catch (_) {}
-      notify(`${added.length} entrega(s) guardada(s)`, 'success');
+      try {
+        await DB.putMany(toSave);
+        this._dbCount = await DB.count();
+      } catch (_) {}
+      notify(`${toSave.length} entrega(s) guardada(s) en BD`, 'success');
+      this.renderHistoryBanner();
     }
     this.renderCurrentView();
     this.renderUpload();
@@ -989,17 +1115,23 @@ const App = {
 
   async deleteDelivery(id) {
     this.deliveries = this.deliveries.filter(d => d.id !== id);
-    try { await DB.remove(id); } catch (_) {}
+    try {
+      await DB.remove(id);
+      this._dbCount = await DB.count();
+    } catch (_) {}
     notify('Entrega eliminada', 'info');
+    this.renderHistoryBanner();
     this.renderCurrentView();
     if (this.currentView !== 'upload') this.renderUpload();
   },
 
   async clearDB() {
-    if (!confirm('¿Eliminar TODAS las entregas?')) return;
+    if (!confirm('¿Eliminar TODAS las entregas de la BD?\nEsta acción no se puede deshacer.')) return;
     this.deliveries = [];
+    this._dbCount   = 0;
     try { await DB.clear(); } catch (_) {}
     notify('Base de datos vaciada', 'info');
+    this.renderHistoryBanner();
     this.renderCurrentView();
     this.renderUpload();
   },
