@@ -235,10 +235,13 @@ tfoot td {
   display: inline-block; padding: 1px 7px; border-radius: 12px;
   font-size: 11px; font-weight: 600;
 }
-.badge-perfect { background: #dbeafe; color: #1e40af; }
-.badge-natsuki { background: #fef3c7; color: #92400e; }
-.badge-cln     { background: #d1fae5; color: #065f46; }
-.badge-stk     { background: #fce7f3; color: #9d174d; }
+.badge-perfect  { background: #dbeafe; color: #1e40af; }
+.badge-natsuki  { background: #fef3c7; color: #92400e; }
+.badge-cln      { background: #d1fae5; color: #065f46; }
+.badge-stk      { background: #fce7f3; color: #9d174d; }
+/* Tipo de PL por empresa */
+.badge-tipo1    { background: #dbeafe; color: #1e3a8a; font-weight: 700; }
+.badge-tipo2    { background: #fef9c3; color: #713f12; font-weight: 700; }
 
 /* ── Filter bar ─────────────────────────────────────────────────── */
 .filter-bar {
@@ -416,6 +419,14 @@ tfoot td {
       <div class="filter-group">
         <label>Código producto</label>
         <input type="text" id="filter-code" placeholder="ej. 11001" style="width:120px">
+      </div>
+      <div class="filter-group">
+        <label>Tipo PL</label>
+        <select id="filter-tipo">
+          <option value="">Todos</option>
+          <option value="1">Tipo 1 · PERFECT PTY</option>
+          <option value="2">Tipo 2 · Parque del Mar</option>
+        </select>
       </div>
       <div class="filter-group">
         <label>Marca</label>

@@ -151,24 +151,29 @@ const Parser = (() => {
 
     const tipo = cols.marca ? 'A (con Marca)' : 'B (sin Marca)';
     console.log(`[Parser] Tipo detectado: ${tipo}`);
-    console.debug('[Parser] cols:', JSON.stringify(cols));
+    console.log('[Parser] cols:', JSON.stringify(cols));
     return cols;
   }
 
   function assignCol(x, cols) {
-    const dataStart = cols.cantidad ?? 200;
-    if (x < dataStart - 20) return 'producto';
+    // Frontera izquierda = punto medio con la columna anterior
+    //   (centra la zona entre los dos encabezados para texto left-aligned).
+    // Frontera derecha   = posición del encabezado de la columna SIGUIENTE
+    //   (captura números right-aligned que aparecen cerca del borde derecho
+    //    de su celda, justo antes del encabezado siguiente).
+    // Con "first-match-wins" (izq→der) no hay ambigüedad en la zona solapada.
     const sorted = Object.entries(cols)
       .filter(([f]) => f !== 'producto')
       .sort((a, b) => a[1] - b[1]);
-    let best = null;
     for (let i = 0; i < sorted.length; i++) {
       const [field, cx] = sorted[i];
-      const thresh = (i === sorted.length - 1) ? 40 : 15;
-      if (x >= cx - thresh) best = field;
-      else break;
+      const prevCx = i > 0 ? sorted[i - 1][1] : cx - 100;  // margen izq amplio para la 1ª col
+      const nextCx = i < sorted.length - 1 ? sorted[i + 1][1] : Infinity;
+      const left  = (prevCx + cx) / 2;
+      const right = nextCx;   // llega hasta el encabezado siguiente (no el midpoint)
+      if (x >= left && x < right) return field;
     }
-    return best;
+    return null;
   }
 
   function isFooterText(text) {
@@ -179,7 +184,8 @@ const Parser = (() => {
            /\bDV\s*\d/i.test(text) ||
            /[Cc]alle\s+\d/.test(text) ||
            /\bAv[e.]?\s/i.test(text) ||
-           /P[áa]gina\s*:/i.test(text) ||
+           /P[áa]gina\s*:?\s*\d/i.test(text) ||
+           /^\s*\d+\s*(de|of|\/)\s*\d+\s*$/i.test(text) ||
            /@[\w.-]+\.\w+/.test(text) ||
            /\(\s*PA\s*\)/i.test(text) ||
            /Zona\s+Industrial/i.test(text) ||
@@ -256,7 +262,9 @@ const Parser = (() => {
     let cur = null, parsedTotals = null;
 
     function extractCode(str) {
-      const m = str.match(/\[([^\]]+)\]/);
+      // El código de producto SOLO puede estar al INICIO de la fila.
+      // Los [refs] embebidos en medio de la descripción NO son códigos de producto.
+      const m = str.match(/^\s*\[([^\]]+)\]/);
       return m ? m[1] : null;
     }
 
@@ -267,14 +275,20 @@ const Parser = (() => {
         const prev = acc.slice(-1);
         const sep  = /[-\/]$/.test(prev) || /^[-\/]/.test(t.str) ? '' : ' ';
         return acc + sep + t.str;
-      }, '').replace(/\[[^\]]*\]/g, '').trim();
+      // Solo elimina el [CÓDIGO] inicial; preserva refs cruzadas dentro del texto
+      }, '').replace(/^\s*\[[^\]]*\]\s*/, '').trim();
     }
 
     for (const row of rows) {
       if (isColHeader(row) || isSecondHeaderRow(row)) continue;
 
+      // Cabecera de página repetida (páginas 2-N) y pie de empresa
+      const _rt = rowText(row);
+      if (/[A-Z]+\/OUT\/\d+/.test(_rt)) continue;
+      if (isFooterText(_rt))            continue;
+
       // ── Clasificar cada token con assignCol ──────────────────────────
-      // Tokens cuya columna sea 'producto' o null → descripción
+      // Tokens cuya columna sea null → descripción
       // El resto → datos
       const descToks = [], dataToks = [];
       for (const t of row) {
@@ -300,8 +314,18 @@ const Parser = (() => {
         continue;
       }
 
-      // ── Filtrar fila "Unidades" ───────────────────────────────────────
+      // ── Filtrar fila "Unidades" (sola o con referencia cruzada) ─────────
+      // Caso simple: solo "Unidades"
       if (/^[Uu]nidades$/.test(rowStr.trim())) continue;
+      // Caso compuesto: "[REF-CODE]  Unidades" — todos los dataToks son "Unidades"
+      // El [REF-CODE] es una referencia alternativa, no un producto nuevo.
+      const onlyUnidades = dataToks.length > 0 &&
+                           dataToks.every(t => /^[Uu]nidades$/i.test(t.str.trim()));
+      if (onlyUnidades) {
+        // Agregar la referencia cruzada a la descripción del producto activo
+        if (cur && code) cur.description += (cur.description ? ' ' : '') + `[${code}]`;
+        continue;
+      }
 
       // ── Lógica de 4 ramas ─────────────────────────────────────────────
       if (code && hasData) {
@@ -315,31 +339,30 @@ const Parser = (() => {
         applyDataTokens(cur, dataToks, cols);
 
       } else if (code && !hasData) {
-        // Código sin datos (los datos vienen en la fila Y siguiente)
+        // Código sin datos: puede ser producto real (datos en fila siguiente)
+        // o referencia cruzada en descripción.
+        // Las refs cruzadas suelen contener '/' (ej: [17801-0S010/17801-05010]).
+        // Los códigos de producto no llevan '/'.
         const codeVal = code.trim();
-        if (cur) {
-          if (/^[A-Z0-9][A-Z0-9\-\.\/]+$/.test(codeVal)) {
-            products.push(cur);
-            cur = {
-              code: codeVal, description: descText,
-              quantity:0, brand:'', l:0, w:0, h:0,
-              pzxb:0, kg:0, m3:0, bultos:0, nBultos:'', ubicacion:'',
-            };
-          } else {
-            if (!isFooterText(descText))
-              cur.description = cur.description ? cur.description + '\n' + descText : descText;
-          }
-        } else {
+        const isRealCode = !codeVal.includes('/') && /^[A-Z0-9][A-Z0-9\-\.]+$/i.test(codeVal);
+        if (isRealCode) {
+          if (cur) products.push(cur);
           cur = {
             code: codeVal, description: descText,
             quantity:0, brand:'', l:0, w:0, h:0,
             pzxb:0, kg:0, m3:0, bultos:0, nBultos:'', ubicacion:'',
           };
+        } else {
+          // Es referencia cruzada → continuar descripción del producto activo
+          if (cur && !isFooterText(descText)) {
+            const extra = descText || `[${codeVal}]`;
+            cur.description = cur.description ? cur.description + ' ' + extra : extra;
+          }
         }
 
       } else if (!code && hasData && cur) {
-        // Datos sin código: Y ligeramente distinta — aplicar al producto activo
-        applyDataTokens(cur, dataToks, cols);
+        // Datos sin código: solo completa campos aún vacíos (evita que subtotales sobreescriban)
+        applyDataTokensSafe(cur, dataToks, cols);
 
       } else if (cur && descText && !hasData) {
         // Continuación de descripción
@@ -386,6 +409,36 @@ const Parser = (() => {
     if (nBultosParts.length) cur.nBultos = nBultosParts.join('');
   }
 
+  // Versión conservadora: solo asigna campos que siguen en su valor inicial.
+  // Evita que filas de subtotales/totales sobreescriban datos ya correctos.
+  function applyDataTokensSafe(cur, dataToks, cols) {
+    const nBultosParts = [];
+    for (const t of dataToks) {
+      const str = t.str.trim();
+      if (!str) continue;
+      const col = assignCol(t.transform[4], cols);
+      if (!col || col === 'producto') continue;
+      const num = parseFloat(str.replace(',', '.'));
+      switch (col) {
+        case 'cantidad': if (!cur.quantity)  cur.quantity = isNaN(num) ? 0 : num; break;
+        case 'marca':    if (!cur.brand)     cur.brand    = str;                   break;
+        case 'l':        if (!cur.l)         cur.l        = isNaN(num) ? 0 : num; break;
+        case 'w':        if (!cur.w)         cur.w        = isNaN(num) ? 0 : num; break;
+        case 'h':        if (!cur.h)         cur.h        = isNaN(num) ? 0 : num; break;
+        case 'pzxb':     if (!cur.pzxb)      cur.pzxb     = isNaN(num) ? 0 : num; break;
+        case 'kg':       if (!cur.kg)        cur.kg       = isNaN(num) ? 0 : num; break;
+        case 'm3':       if (!cur.m3)        cur.m3       = isNaN(num) ? 0 : num; break;
+        case 'bultos':   if (!cur.bultos)    cur.bultos   = isNaN(num) ? 0 : num; break;
+        case 'nbultos':
+          if (/^[\d\s\-]+$/.test(str)) { if (!cur.nBultos) nBultosParts.push(str); }
+          else                          { if (!cur.ubicacion) cur.ubicacion = str; }
+          break;
+        case 'ubicacion': if (!cur.ubicacion) cur.ubicacion = str; break;
+      }
+    }
+    if (nBultosParts.length && !cur.nBultos) cur.nBultos = nBultosParts.join('');
+  }
+
   async function parsePDF(arrayBuffer, filename) {
     pdfjsLib.GlobalWorkerOptions.workerSrc =
       'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -412,12 +465,32 @@ const Parser = (() => {
       }
     }
 
-    const rows = groupByY(allTokens);
+    // Une filas donde el código viene partido en dos Y distintos: "[MU1314-" + "FILTRO]"
+    function mergeCodeSplitRows(rawRows) {
+      const out = [];
+      for (let i = 0; i < rawRows.length; i++) {
+        const s = rowText(rawRows[i]);
+        if (i < rawRows.length - 1 && s.includes('[') && !s.includes(']') &&
+            rowText(rawRows[i + 1]).includes(']')) {
+          out.push([...rawRows[i], ...rawRows[i + 1]].sort((a, b) => a.transform[4] - b.transform[4]));
+          i++;
+        } else {
+          out.push(rawRows[i]);
+        }
+      }
+      return out;
+    }
+
+    const rows = mergeCodeSplitRows(groupByY(allTokens));
     console.log(`[Parser] ${rows.length} filas agrupadas`);
 
+    // Nueva sección solo cuando el código de entrega CAMBIA.
+    // Así un PDF de 4 páginas con el mismo código no genera 4 entregas separadas.
     const secStarts = [];
+    let lastSecCode = null;
     rows.forEach((row, i) => {
-      if (/[A-Z]+\/OUT\/\d+/.test(rowText(row))) secStarts.push(i);
+      const m = rowText(row).match(/([A-Z]+\/OUT\/\d+)/);
+      if (m && m[1] !== lastSecCode) { secStarts.push(i); lastSecCode = m[1]; }
     });
     if (!secStarts.length) {
       console.warn('[Parser] Sin patrón XX/OUT/NNNNN — parseo completo');
@@ -446,11 +519,20 @@ const Parser = (() => {
 
       const products = parseProducts(secRows.slice(afterHdr), cols);
       const code     = meta.deliveryCode || `DELIVERY-${s}-${Date.now()}`;
-      console.log(`[Parser] "${code}": ${products.length} producto(s)`);
+
+      // ── Detección de tipo de PL y empresa ────────────────────────────────
+      let plTipo = 1, empresa = 'PERFECT PTY';
+      if (/^WH\/OUT\//i.test(code) || !cols.marca) {
+        plTipo  = 2;
+        empresa = 'Parque del Mar';
+      }
+      console.log(`[Parser] "${code}" → Tipo ${plTipo} (${empresa}): ${products.length} producto(s)`);
 
       deliveries.push({
         id:           code,
         deliveryCode: code,
+        plTipo,
+        empresa,
         orderNumber:  meta.orderNumber,
         warehouse:    meta.warehouse,
         status:       meta.status,
@@ -547,8 +629,8 @@ const Exporter = (() => {
       merges.push({ s:{r:base,c:0}, e:{r:base,c:NC-1} });
 
       const meta = [
-        [['Orden', d.orderNumber], ['Almacén', d.warehouse], ['Estado', d.status]],
-        [['Fecha', d.date],        ['Vendedor', d.seller]],
+        [['Tipo PL', `Tipo ${d.plTipo||1} · ${d.empresa||'PERFECT PTY'}`], ['Orden', d.orderNumber], ['Almacén', d.warehouse]],
+        [['Estado', d.status],     ['Fecha', d.date],     ['Vendedor', d.seller]],
         [['Cliente', d.client],    ['Archivo', d.sourceFile]],
       ];
       meta.forEach(pairs => {
@@ -597,7 +679,7 @@ const Exporter = (() => {
 
   function sheetResumen(wb, deliveries) {
     const rows = [];
-    rows.push(['Código Entrega','Orden','Fecha','Cliente','Almacén','Estado',
+    rows.push(['Tipo PL','Empresa','Código Entrega','Orden','Fecha','Cliente','Almacén','Estado',
                'Productos','Cant. Total','kg Total','m³ Total','Bultos Total']
       .map(h => c(h, 's', S.colHdr)));
 
@@ -608,6 +690,7 @@ const Exporter = (() => {
       const ts = i%2 ? S.rowEven : S.rowOdd;
       const ns = i%2 ? S.numEven : S.numOdd;
       rows.push([
+        c(`Tipo ${d.plTipo||1}`,'s',ts), c(d.empresa||'PERFECT PTY','s',ts),
         c(d.deliveryCode,'s',ts), c(d.orderNumber,'s',ts),
         c(d.date,'s',ts),         c(d.client,'s',ts),
         c(d.warehouse,'s',ts),    c(d.status,'s',ts),
@@ -617,11 +700,11 @@ const Exporter = (() => {
     });
     rows.push([
       c('TOTAL GENERAL','s',S.totLbl),
-      ...Array(5).fill(c('','s',S.tot)),
+      ...Array(7).fill(c('','s',S.tot)),
       c(deliveries.reduce((a,d)=>a+d.products.length,0),'n',S.tot),
       c(gQty,'n',S.tot), c(gKg,'n',S.tot), c(gM3,'n',S.tot), c(gBultos,'n',S.tot),
     ]);
-    rows.push(Array(11).fill(c('','s',S.blank)));
+    rows.push(Array(13).fill(c('','s',S.blank)));
 
     rows.push(['Marca','Líneas','Cant. Total','kg Total','m³ Total'].map(h => c(h,'s',S.colHdr)));
     const byBrand = {};
@@ -637,12 +720,12 @@ const Exporter = (() => {
       rows.push([c(brand,'s',ts), c(v.lines,'n',ns), c(v.qty,'n',ns), c(v.kg,'n',ns), c(v.m3,'n',ns)]);
     });
 
-    makeSheet(wb, 'Resumen', rows, [24,13,11,22,16,11,10,13,10,10,13]);
+    makeSheet(wb, 'Resumen', rows, [8,18,24,13,11,22,16,11,10,13,10,10,13]);
   }
 
   function sheetDB(wb, deliveries) {
     const HDR = [
-      'Archivo','Código Entrega','Orden','Almacén','Estado','Fecha','Vendedor','Cliente',
+      'Tipo PL','Empresa','Archivo','Código Entrega','Orden','Almacén','Estado','Fecha','Vendedor','Cliente',
       'Cód. Producto','Descripción','Cantidad','Marca',
       'L (cm)','W (cm)','H (cm)','PZxB','kg','m³','Bultos','N° Bultos','Ubicación',
     ];
@@ -653,6 +736,7 @@ const Exporter = (() => {
         const ts = rIdx%2 ? S.rowEven : S.rowOdd;
         const ns = rIdx%2 ? S.numEven : S.numOdd;
         rows.push([
+          c(`Tipo ${d.plTipo||1}`,'s',ts), c(d.empresa||'PERFECT PTY','s',ts),
           c(d.sourceFile,'s',ts),   c(d.deliveryCode,'s',ts),
           c(d.orderNumber,'s',ts),  c(d.warehouse,'s',ts),
           c(d.status,'s',ts),       c(d.date,'s',ts),
@@ -670,7 +754,7 @@ const Exporter = (() => {
       });
     });
     makeSheet(wb, 'Base de datos', rows,
-      [22,18,11,15,10,11,17,24,13,42,9,10,7,7,7,7,8,9,8,13,18]);
+      [8,18,22,18,11,15,10,11,17,24,13,42,9,10,7,7,7,7,8,9,8,13,18]);
   }
 
   function exportToExcel(deliveries) {
@@ -863,7 +947,10 @@ const App = {
           <div class="ri-icon">📦</div>
           <div class="ri-info">
             <div class="ri-name">${esc(d.deliveryCode)}</div>
-            <div class="ri-meta">${esc(d.client||'')} · ${esc(d.date||'—')} · ${d.products.length} producto(s) · ${fmt(tot.kg,1)} kg · <em>${esc(d.sourceFile||'')}</em></div>
+            <div class="ri-meta">
+              <span class="badge badge-tipo${d.plTipo||1}" style="font-size:10px">T${d.plTipo||1}·${esc(d.empresa||'PERFECT PTY')}</span>
+              ${esc(d.client||'')} · ${esc(d.date||'—')} · ${d.products.length} prod. · ${fmt(tot.kg,1)} kg
+            </div>
           </div>
           <button class="ri-del" data-id="${esc(d.id)}" title="Eliminar">✕</button>
         </div>`;
@@ -902,7 +989,10 @@ const App = {
         <div class="delivery-header">
           <div>
             <div class="delivery-code">${esc(d.deliveryCode)}</div>
-            <div style="font-size:12px;opacity:.8;margin-top:2px">${esc(d.sourceFile||'')}</div>
+            <div style="font-size:12px;opacity:.8;margin-top:4px">
+              <span class="badge badge-tipo${d.plTipo||1}">Tipo ${d.plTipo||1} · ${esc(d.empresa||'PERFECT PTY')}</span>
+              &nbsp;${esc(d.sourceFile||'')}
+            </div>
           </div>
           <div style="font-size:12px;opacity:.8;text-align:right">Cargado: ${new Date(d.loadedAt).toLocaleDateString('es-PA')}</div>
         </div>
@@ -962,9 +1052,13 @@ const App = {
       byBrand[b].count++; byBrand[b].qty += p.quantity;
       byBrand[b].kg += p.kg; byBrand[b].m3 += p.m3; byBrand[b].bultos += p.bultos;
     });
+    const t1 = this.deliveries.filter(d => (d.plTipo||1) === 1);
+    const t2 = this.deliveries.filter(d => (d.plTipo||1) === 2);
     root.innerHTML = `
     <div class="stats-bar">
       <div class="stat-card"><div class="stat-value">${this.deliveries.length}</div><div class="stat-label">Entregas</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:#1e3a8a">${t1.length}</div><div class="stat-label">T1 · PERFECT PTY</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:#713f12">${t2.length}</div><div class="stat-label">T2 · Parque del Mar</div></div>
       <div class="stat-card"><div class="stat-value">${allProds.length}</div><div class="stat-label">Líneas de producto</div></div>
       <div class="stat-card"><div class="stat-value">${fmt(grand.quantity,0)}</div><div class="stat-label">Unidades totales</div></div>
       <div class="stat-card"><div class="stat-value">${fmt(grand.kg,0)}</div><div class="stat-label">kg totales</div></div>
@@ -976,13 +1070,16 @@ const App = {
         <div class="card-title">Por entrega</div>
         <div class="table-wrap"><table>
           <thead><tr>
-            <th>Código Entrega</th><th>Fecha</th><th>Cliente</th>
+            <th>Tipo</th><th>Empresa</th><th>Código Entrega</th><th>Fecha</th><th>Cliente</th>
             <th class="td-num">Prods.</th><th class="td-num">Cant.</th>
             <th class="td-num">kg</th><th class="td-num">m³</th><th class="td-num">Bultos</th>
           </tr></thead>
           <tbody>${this.deliveries.map(d => {
-            const t = calcTotals(d.products);
+            const t    = calcTotals(d.products);
+            const tipo = d.plTipo || 1;
             return `<tr>
+              <td style="text-align:center"><span class="badge badge-tipo${tipo}" style="font-size:11px">T${tipo}</span></td>
+              <td style="font-size:11px;white-space:nowrap">${esc(d.empresa||'PERFECT PTY')}</td>
               <td><strong>${esc(d.deliveryCode)}</strong></td>
               <td>${esc(d.date||'—')}</td><td>${esc(d.client||'—')}</td>
               <td class="td-num">${d.products.length}</td>
@@ -993,7 +1090,7 @@ const App = {
             </tr>`;
           }).join('')}</tbody>
           <tfoot><tr>
-            <td colspan="3"><strong>TOTAL</strong></td>
+            <td colspan="5"><strong>TOTAL</strong></td>
             <td class="td-num"><strong>${allProds.length}</strong></td>
             <td class="td-num"><strong>${fmt(grand.quantity,0)}</strong></td>
             <td class="td-num"><strong>${fmt(grand.kg,2)}</strong></td>
@@ -1022,7 +1119,7 @@ const App = {
   },
 
   bindFilters() {
-    ['filter-date-from','filter-date-to','filter-code','filter-brand','filter-search']
+    ['filter-date-from','filter-date-to','filter-code','filter-tipo','filter-brand','filter-search']
       .forEach(id => {
         document.getElementById(id).addEventListener('input',  () => this.renderDatabase());
         document.getElementById(id).addEventListener('change', () => this.renderDatabase());
@@ -1030,6 +1127,7 @@ const App = {
     document.getElementById('btn-clear-filters').addEventListener('click', () => {
       ['filter-date-from','filter-date-to','filter-code','filter-search']
         .forEach(id => { document.getElementById(id).value = ''; });
+      document.getElementById('filter-tipo').value  = '';
       document.getElementById('filter-brand').value = '';
       this.sortCol = null;
       this.renderDatabase();
@@ -1041,6 +1139,7 @@ const App = {
       from:   document.getElementById('filter-date-from').value,
       to:     document.getElementById('filter-date-to').value,
       code:   document.getElementById('filter-code').value.trim().toLowerCase(),
+      tipo:   document.getElementById('filter-tipo').value,
       brand:  document.getElementById('filter-brand').value,
       search: document.getElementById('filter-search').value.trim().toLowerCase(),
     };
@@ -1057,6 +1156,8 @@ const App = {
   sortVal(row, col) {
     const nums = ['quantity','l','w','h','pzxb','kg','m3','bultos'];
     const map  = {
+      tipo:         String(row.d.plTipo || 1),
+      empresa:      row.d.empresa || 'PERFECT PTY',
       deliveryCode: row.d.deliveryCode, date: row.dDate,
       client: row.d.client, order: row.d.orderNumber,
       source: row.d.sourceFile, code: row.p.code,
@@ -1079,10 +1180,11 @@ const App = {
 
     if (f.from)   rows = rows.filter(r => r.dDate >= f.from);
     if (f.to)     rows = rows.filter(r => r.dDate <= f.to);
+    if (f.tipo)   rows = rows.filter(r => String(r.d.plTipo || 1) === f.tipo);
     if (f.code)   rows = rows.filter(r => r.p.code.toLowerCase().includes(f.code));
     if (f.brand)  rows = rows.filter(r => (r.p.brand||'').toUpperCase() === f.brand);
     if (f.search) rows = rows.filter(r => {
-      const hay = [r.d.deliveryCode, r.d.client, r.d.orderNumber,
+      const hay = [r.d.deliveryCode, r.d.client, r.d.orderNumber, r.d.empresa,
                    r.p.code, r.p.description, r.p.brand, r.p.ubicacion]
                   .join(' ').toLowerCase();
       return hay.includes(f.search);
@@ -1114,6 +1216,7 @@ const App = {
     wrap.innerHTML = `<div class="card" style="padding:0;overflow:hidden">
       <div class="table-wrap"><table>
         <thead><tr>
+          ${th('tipo','Tipo PL')}${th('empresa','Empresa')}
           ${th('deliveryCode','Código Entrega')}${th('date','Fecha')}${th('client','Cliente')}
           ${th('order','Orden')}${th('code','Cód. Prod.')}${th('description','Descripción')}
           ${th('quantity','Cantidad')}${th('brand','Marca')}
@@ -1121,7 +1224,12 @@ const App = {
           ${th('kg','kg')}${th('m3','m³')}${th('bultos','Bultos')}
           ${th('nBultos','N° Bultos')}${th('ubicacion','Ubicación')}${th('source','Archivo')}
         </tr></thead>
-        <tbody>${rows.map(({ d, p }) => `<tr>
+        <tbody>${rows.map(({ d, p }) => {
+          const tipo = d.plTipo || 1;
+          const tipoBadge = `<span class="badge badge-tipo${tipo}" style="font-size:11px">T${tipo}</span>`;
+          return `<tr>
+          <td style="text-align:center">${tipoBadge}</td>
+          <td style="font-size:11px;white-space:nowrap">${esc(d.empresa||'PERFECT PTY')}</td>
           <td><strong>${esc(d.deliveryCode)}</strong></td>
           <td>${esc(d.date||'')}</td><td>${esc(d.client||'')}</td><td>${esc(d.orderNumber||'')}</td>
           <td><span style="font-family:monospace;font-weight:700;color:var(--primary)">[${esc(p.code)}]</span></td>
@@ -1132,7 +1240,7 @@ const App = {
           <td class="td-num">${fmt(p.kg,2)}</td><td class="td-num">${fmt(p.m3,4)}</td><td class="td-num">${fmt(p.bultos,0)}</td>
           <td>${esc(p.nBultos||'')}</td><td>${esc(p.ubicacion||'')}</td>
           <td style="font-size:11px;color:var(--text-2)">${esc(d.sourceFile||'')}</td>
-        </tr>`).join('')}</tbody>
+        </tr>`;}).join('')}</tbody>
       </table></div>
     </div>`;
 
