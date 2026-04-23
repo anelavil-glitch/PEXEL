@@ -86,6 +86,65 @@ const DB = (() => {
 const Parser = (() => {
   const Y_THRESH = 5;
 
+  // Columns that only accept numeric values.
+  // Text / code / ref tokens that land in these zones go to the description instead.
+  const NUMERIC_COLS = new Set(['cantidad', 'l', 'w', 'h', 'pzxb', 'kg', 'm3', 'bultos']);
+
+  // ── 1. TOKEN CLASSIFICATION ─────────────────────────────────────────────
+  // Returns the semantic type of a token string:
+  //   'number' → pure numeric value (integer or decimal, comma or dot separator)
+  //   'code'   → product code in brackets  [ABC-123]
+  //   'ref'    → cross-reference code containing '/' and letters  (e.g. 17801-0S010/17801-05010)
+  //   'text'   → brand names, labels, descriptions — everything else
+  //
+  // Using a dedicated function (instead of inline regex) keeps the logic
+  // in one place and avoids subtle mismatch bugs when the rule needs updating.
+  function classifyToken(str) {
+    const s = (str || '').trim();
+    if (!s)                                    return 'text';
+    if (/^\[[^\]]+\]$/.test(s))                return 'code';    // [CODE]
+    if (/^-?\d+([.,]\d+)?$/.test(s))           return 'number';  // 5  10.5  1,000
+    if (/[\/]/.test(s) && /[A-Za-z]/.test(s)) return 'ref';     // 17801-0S010/17801-05010
+    return 'text';
+  }
+
+  // ── 2. TOKEN JOINING ─────────────────────────────────────────────────────
+  // Merge adjacent tokens that together form a complete number.
+  // PDF.js sometimes renders "61,0" as three separate tokens: ["61", ",", "0"].
+  // Pattern detected: <digits> + <separator ','|'.'> + <digits>  with gap ≤ 3pt between each.
+  // Only three-part merges are handled to avoid joining unrelated adjacent numbers.
+  function joinBrokenTokens(row) {
+    if (row.length < 2) return row;
+    const out = [];
+    let i = 0;
+    while (i < row.length) {
+      const tok = row[i];
+      const s   = tok.str.trim();
+      if (i + 2 < row.length) {
+        const sep  = row[i + 1];
+        const rest = row[i + 2];
+        const ms   = sep.str.trim();
+        const rs   = rest.str.trim();
+        const g1   = sep.transform[4]  - (tok.transform[4]  + (tok.width  || 0));
+        const g2   = rest.transform[4] - (sep.transform[4]  + (sep.width  || 0));
+        if (g1 <= 3 && g2 <= 3 &&
+            /^\d+$/.test(s) && /^[,.]$/.test(ms) && /^\d+$/.test(rs)) {
+          // Fuse the three tokens into one number token (keeps the first token's position)
+          out.push({
+            ...tok,
+            str:   s + ms + rs,
+            width: (tok.width || 0) + g1 + (sep.width || 0) + g2 + (rest.width || 0),
+          });
+          i += 3;
+          continue;
+        }
+      }
+      out.push(tok);
+      i++;
+    }
+    return out;
+  }
+
   function groupByY(items) {
     const valid = items.filter(t => t.str && t.str.trim());
     if (!valid.length) return [];
@@ -183,32 +242,47 @@ const Parser = (() => {
         : nextCx;
       return `${f}:[${Math.round(left)}–${right===Infinity?'∞':Math.round(right)}]`;
     });
-    console.log(`[Parser] Zones (${_useStrict?'midpoint-Tipo2':'nextCx-Tipo1'}):`, zones.join('  '));
+    console.log(`[Parser] Zones (${_useStrict?'strict-midpoint·Tipo2':'extended-nextCx·Tipo1'}):`, zones.join('  '));
     return cols;
   }
 
+  // ── 3. COLUMN ZONE ASSIGNMENT ────────────────────────────────────────────
+  // Maps a token's X coordinate to a column field using geometric zones.
+  //
+  // Zone boundary strategy:
+  //
+  //   Type 1 — con Marca (PERFECT PTY, COLON/OUT/…)
+  //     right = nextCx  (extended zone)
+  //     Column headers are left-aligned; numeric values are right-aligned within
+  //     the cell. A narrow "5" can appear at x ≈ nextCx − 3pt, well past the
+  //     strict midpoint. Extending the zone to nextCx captures these values.
+  //     Any overlap with the next column is resolved by first-wins in applyDataTokens
+  //     and by classifyToken rejecting text from NUMERIC_COLS.
+  //
+  //   Type 2 — sin Marca (Parque del Mar, WH/OUT/…)
+  //     right = strict midpoint = (cx + nextCx) / 2
+  //     Columns are tightly packed (20–50pt gaps). Extending zones to nextCx would
+  //     allow description text or values from adjacent columns to bleed in.
+  //     Strict midpoints create non-overlapping Voronoi regions for clean assignment.
+  //     The descZoneRight guard (see parseProducts) handles pure-number tokens that
+  //     appear inside the description cell but to the left of the data columns.
+  //
+  // Returns the column field name, or null if x is left of all defined zones.
   function assignCol(x, cols) {
-    // Tipo 1 (con Marca): right = nextCx  — captura números right-aligned cerca del borde
-    //   derecho de la celda (p.ej. un "5" estrecho a x ≈ nextCx-5pt).  El solapamiento
-    //   resultante se resuelve con first-wins en applyDataTokens.
-    //
-    // Tipo 2 (sin Marca, Parque del Mar): right = punto medio entre esta columna y la
-    //   siguiente (midpoint estricto).  Las columnas están muy juntas (29-45pt de gap),
-    //   por lo que el solapamiento de right=nextCx causaría asignaciones incorrectas.
-    //   Los números de una sola cifra en Tipo 2 caben holgadamente dentro del midpoint.
-    const useStrict = !cols.marca;   // true = Tipo 2 → midpoint estricto
+    const useStrict = !cols.marca;   // true → Type 2 strict midpoints
 
     const sorted = Object.entries(cols)
       .filter(([f]) => f !== 'producto')
       .sort((a, b) => a[1] - b[1]);
+
     for (let i = 0; i < sorted.length; i++) {
       const [field, cx] = sorted[i];
       const prevCx = i > 0 ? sorted[i - 1][1] : cx - 100;
       const nextCx = i < sorted.length - 1 ? sorted[i + 1][1] : Infinity;
-      const left  = (prevCx + cx) / 2;
-      const right = useStrict
-        ? (nextCx === Infinity ? Infinity : (cx + nextCx) / 2)   // midpoint estricto (Tipo 2)
-        : nextCx;                                                  // right-extended  (Tipo 1)
+      const left   = (prevCx + cx) / 2;
+      const right  = useStrict
+        ? (nextCx === Infinity ? Infinity : (cx + nextCx) / 2)   // Type 2 — strict midpoint
+        : nextCx;                                                  // Type 1 — extended zone
       if (x >= left && x < right) return field;
     }
     return null;
@@ -317,6 +391,18 @@ const Parser = (() => {
       }, '').replace(/^\s*\[[^\]]*\]\s*/, '').trim();
     }
 
+    // ── Description zone right boundary ────────────────────────────────
+    // In Type 2 PDFs product descriptions extend far right — sometimes past x=330 —
+    // right up to the Cantidad column header (x≈341).  Even pure number tokens
+    // (e.g. "18" from "FILTRO 18-22 HONDA") can appear in that zone.
+    // Anything left of this boundary is unconditionally description, mirroring how
+    // Acrobat uses cell bounding boxes: content inside the "Producto" cell bbox is
+    // always description regardless of token content.
+    // Type 1 PDFs leave this at -Infinity (all zones handled by standard assignment).
+    const descZoneRight = !cols.marca && cols.cantidad != null
+      ? cols.cantidad - 10   // 10pt before Cantidad header = safe description boundary
+      : -Infinity;
+
     for (const row of rows) {
       if (isColHeader(row) || isSecondHeaderRow(row)) continue;
 
@@ -325,39 +411,35 @@ const Parser = (() => {
       if (/[A-Z]+\/OUT\/\d+/.test(_rt)) continue;
       if (isFooterText(_rt))            continue;
 
-      // ── Clasificar cada token con assignCol ──────────────────────────
-      // Tokens cuya columna sea null → descripción
-      // El resto → datos
+      // ── Step 1: merge split number tokens (e.g. ["61",",","0"] → "61,0") ────
+      const rowToks = joinBrokenTokens(row);
+
+      // ── Step 2: classify and route each token ────────────────────────────
       //
-      // descGuard (solo Tipo 2, sin Marca): en PDFs con columnas muy juntas, el texto
-      // de descripción puede extenderse hacia la derecha hasta x≈col.cantidad-20pt.
-      // Cualquier token a la izquierda de ese umbral siempre va a descripción, evitando
-      // que texto como "[17042", "LEX.", "2.0L." se cuele en la zona de Cantidad y
-      // ponga quantity=0 o trunque la descripción del producto.
-      const descGuard = !cols.marca && cols.cantidad != null
-        ? cols.cantidad - 15   // 15pt antes del encabezado Cantidad → zona segura de descripción
-        : -Infinity;           // Tipo 1: nunca activa
-
-      // Columnas que SOLO deben contener números (sin texto de descripción)
-      const NUMERIC_COLS = ['cantidad','l','w','h','pzxb','kg','m3','bultos'];
-
+      //  Layer A — descZoneRight: tokens clearly left of data columns → description.
+      //            Handles pure-number tokens inside description text (Type 2 only).
+      //
+      //  Layer B — assignCol: geometric zone assignment (strict midpoints / extended).
+      //            Tokens landing in null or 'producto' → description.
+      //
+      //  Layer C — classifyToken: NUMERIC_COLS reject non-number tokens.
+      //            Replaces inline regex; handles "8V./", "99-05/RAV-4", "1.5L", "18-22", etc.
+      //            A single classifyToken call covers all three cases cleanly.
       const descToks = [], dataToks = [];
-      for (const t of row) {
-        const x   = t.transform[4];
-        const str = t.str.trim();
+      for (const t of rowToks) {
+        const x    = t.transform[4];
+        const str  = t.str.trim();
+        const type = classifyToken(str);   // 'number' | 'code' | 'ref' | 'text'
 
-        // 1. descGuard: tokens a la izquierda del umbral → descripción siempre
-        if (x < descGuard) { descToks.push(t); continue; }
+        // Layer A: description boundary
+        if (x < descZoneRight) { descToks.push(t); continue; }
 
+        // Layer B: geometric zone
         const col = assignCol(x, cols);
         if (!col || col === 'producto') { descToks.push(t); continue; }
 
-        // 2. Columnas numéricas: rechazar tokens no-numéricos aunque caigan en la zona.
-        //    Esto filtra texto de descripción como "8V./", "99-05/RAV-4", "1.5L",
-        //    "2.0L." que parseFloat convierte en números parciales (8, 99, 1.5, 2)
-        //    generando valores erróneos de Cantidad/L/W/H/kg/m³.
-        //    Patrón válido: opcionalmente signo, dígitos, y opcionalmente coma/punto + dígitos.
-        if (NUMERIC_COLS.includes(col) && !/^-?\d+([.,]\d+)?$/.test(str)) {
+        // Layer C: type validation for numeric columns
+        if (NUMERIC_COLS.has(col) && type !== 'number') {
           descToks.push(t);
           continue;
         }
@@ -365,7 +447,7 @@ const Parser = (() => {
         dataToks.push(t);
       }
 
-      const rowStr   = row.map(t => t.str).join('');
+      const rowStr   = rowToks.map(t => t.str).join('');
       const code     = extractCode(rowStr);
       const hasData  = dataToks.length > 0;
       const descText = buildDescText(descToks);
