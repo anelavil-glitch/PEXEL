@@ -464,16 +464,43 @@ const Parser = (() => {
         continue;
       }
 
-      // ── Filtrar fila "Unidades" (sola o con referencia cruzada) ─────────
-      // Caso simple: solo "Unidades"
+      // ── Filtrar filas "Unidades" (sola o con código de referencia cruzada) ──
+      //
+      // Caso A: solo "Unidades" en la fila (sin código, sin datos)
       if (/^[Uu]nidades$/.test(rowStr.trim())) continue;
-      // Caso compuesto: "[REF-CODE]  Unidades" — todos los dataToks son "Unidades"
-      // El [REF-CODE] es una referencia alternativa, no un producto nuevo.
+
+      // Caso B: [CÓDIGO] + "Unidades" en dataToks (zona de texto como nbultos/ubicacion)
+      //   El código alterno va a la descripción del producto activo.
       const onlyUnidades = dataToks.length > 0 &&
                            dataToks.every(t => /^[Uu]nidades$/i.test(t.str.trim()));
       if (onlyUnidades) {
-        // Agregar la referencia cruzada a la descripción del producto activo
         if (cur && code) cur.description += (cur.description ? ' ' : '') + `[${code}]`;
+        continue;
+      }
+
+      // Caso C: [CÓDIGO] + "Unidades" rechazada a descToks
+      //   Parque del Mar: "Unidades" cae en la posición de Cantidad.
+      //   classifyToken → 'text'; NUMERIC_COLS rechaza 'text' de 'cantidad' → descToks.
+      //   Resultado: code=ALT_CODE, hasData=false, descText="Unidades".
+      //   Sin este caso entraría en "código sin datos" → producto fantasma + totales incorrectos.
+      if (code && !hasData && /^[Uu]nidades$/i.test(descText.trim())) {
+        if (cur) cur.description += (cur.description ? ' ' : '') + `[${code}]`;
+        continue;
+      }
+
+      // ── Fila de totales implícita (Parque del Mar) ──────────────────────
+      // Al final de estos PLs existe una fila de totales SIN la etiqueta "TOTAL".
+      // Solo contiene valores numéricos: cantidad total, kg, m³, bultos.
+      // Señales: sin código, sin descripción, con datos, PDF Tipo 2 (sin Marca).
+      // La almacenamos en parsedTotals y la excluimos de la tabla de productos.
+      if (!code && !descText && hasData && !cols.marca) {
+        if (cur) { products.push(cur); cur = null; }
+        if (!parsedTotals) parsedTotals = {};
+        for (const t of dataToks) {
+          const col = assignCol(t.transform[4], cols);
+          const val = parseFloat(t.str.replace(',', '.'));
+          if (col && col !== 'producto' && !isNaN(val)) parsedTotals[col] = val;
+        }
         continue;
       }
 

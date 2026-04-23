@@ -1,7 +1,7 @@
 'use strict';
 
-const CACHE_STATIC = 'packing-list-v5';
-const CACHE_CDN    = 'packing-list-cdn-v5';
+const CACHE_STATIC = 'packing-list-v6';
+const CACHE_CDN    = 'packing-list-cdn-v6';
 
 const STATIC_ASSETS = [
   './index.html',
