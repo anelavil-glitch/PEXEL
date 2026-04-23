@@ -171,34 +171,33 @@ const Parser = (() => {
     // DEBUG: show each header token with its X position
     console.log('[Parser] Header tokens:',
       tokens.map(t => `"${t.str}"@${Math.round(t.x)}`).join('  |  '));
-    // DEBUG: show computed zone boundaries
-    const _sorted = Object.entries(cols).filter(([f]) => f !== 'producto').sort((a,b)=>a[1]-b[1]);
+    // DEBUG: show computed zone boundaries (mirrors la lógica real de assignCol)
+    const _sorted    = Object.entries(cols).filter(([f]) => f !== 'producto').sort((a,b)=>a[1]-b[1]);
+    const _useStrict = !cols.marca;
     const zones = _sorted.map(([f,cx],i)=>{
       const prevCx = i>0?_sorted[i-1][1]:cx-100;
       const nextCx = i<_sorted.length-1?_sorted[i+1][1]:Infinity;
       const left   = (prevCx+cx)/2;
-      const right  = nextCx;
+      const right  = _useStrict
+        ? (nextCx===Infinity ? Infinity : (cx+nextCx)/2)
+        : nextCx;
       return `${f}:[${Math.round(left)}–${right===Infinity?'∞':Math.round(right)}]`;
     });
-    console.log('[Parser] Zones:', zones.join('  '));
+    console.log(`[Parser] Zones (${_useStrict?'midpoint-Tipo2':'nextCx-Tipo1'}):`, zones.join('  '));
     return cols;
   }
 
   function assignCol(x, cols) {
-    // Frontera izquierda = punto medio con la columna anterior.
-    // Frontera derecha   = posición del encabezado de la columna SIGUIENTE (right = nextCx).
+    // Tipo 1 (con Marca): right = nextCx  — captura números right-aligned cerca del borde
+    //   derecho de la celda (p.ej. un "5" estrecho a x ≈ nextCx-5pt).  El solapamiento
+    //   resultante se resuelve con first-wins en applyDataTokens.
     //
-    // ¿Por qué right = nextCx y no midpoint?
-    //   Los números right-aligned empiezan cerca del BORDE DERECHO de su celda.
-    //   Para un número estrecho ("5") eso puede ser x ≈ nextCx - 5pt, que ya supera
-    //   el midpoint. Con right = nextCx capturamos esos tokens sin perderlos.
-    //
-    // ¿Por qué no se "cuela" el token de la columna adyacente?
-    //   Los tokens de la columna N+1 (texto left-aligned como "FUKA", o números
-    //   right-aligned cuya celda empieza en nextCx) tienen x >= nextCx.
-    //   Los únicos que podrían colarse son tokens decimales separados (p.ej. "11"
-    //   de "11.000"), pero applyDataTokens usa first-wins, así que el valor correcto
-    //   (número más ancho, x más bajo) ya fue asignado y el token tardío se ignora.
+    // Tipo 2 (sin Marca, Parque del Mar): right = punto medio entre esta columna y la
+    //   siguiente (midpoint estricto).  Las columnas están muy juntas (29-45pt de gap),
+    //   por lo que el solapamiento de right=nextCx causaría asignaciones incorrectas.
+    //   Los números de una sola cifra en Tipo 2 caben holgadamente dentro del midpoint.
+    const useStrict = !cols.marca;   // true = Tipo 2 → midpoint estricto
+
     const sorted = Object.entries(cols)
       .filter(([f]) => f !== 'producto')
       .sort((a, b) => a[1] - b[1]);
@@ -207,7 +206,9 @@ const Parser = (() => {
       const prevCx = i > 0 ? sorted[i - 1][1] : cx - 100;
       const nextCx = i < sorted.length - 1 ? sorted[i + 1][1] : Infinity;
       const left  = (prevCx + cx) / 2;
-      const right = nextCx;   // captura números right-aligned cerca del borde derecho de la celda
+      const right = useStrict
+        ? (nextCx === Infinity ? Infinity : (cx + nextCx) / 2)   // midpoint estricto (Tipo 2)
+        : nextCx;                                                  // right-extended  (Tipo 1)
       if (x >= left && x < right) return field;
     }
     return null;
@@ -327,11 +328,41 @@ const Parser = (() => {
       // ── Clasificar cada token con assignCol ──────────────────────────
       // Tokens cuya columna sea null → descripción
       // El resto → datos
+      //
+      // descGuard (solo Tipo 2, sin Marca): en PDFs con columnas muy juntas, el texto
+      // de descripción puede extenderse hacia la derecha hasta x≈col.cantidad-20pt.
+      // Cualquier token a la izquierda de ese umbral siempre va a descripción, evitando
+      // que texto como "[17042", "LEX.", "2.0L." se cuele en la zona de Cantidad y
+      // ponga quantity=0 o trunque la descripción del producto.
+      const descGuard = !cols.marca && cols.cantidad != null
+        ? cols.cantidad - 15   // 15pt antes del encabezado Cantidad → zona segura de descripción
+        : -Infinity;           // Tipo 1: nunca activa
+
+      // Columnas que SOLO deben contener números (sin texto de descripción)
+      const NUMERIC_COLS = ['cantidad','l','w','h','pzxb','kg','m3','bultos'];
+
       const descToks = [], dataToks = [];
       for (const t of row) {
-        const col = assignCol(t.transform[4], cols);
-        if (!col || col === 'producto') descToks.push(t);
-        else                            dataToks.push(t);
+        const x   = t.transform[4];
+        const str = t.str.trim();
+
+        // 1. descGuard: tokens a la izquierda del umbral → descripción siempre
+        if (x < descGuard) { descToks.push(t); continue; }
+
+        const col = assignCol(x, cols);
+        if (!col || col === 'producto') { descToks.push(t); continue; }
+
+        // 2. Columnas numéricas: rechazar tokens no-numéricos aunque caigan en la zona.
+        //    Esto filtra texto de descripción como "8V./", "99-05/RAV-4", "1.5L",
+        //    "2.0L." que parseFloat convierte en números parciales (8, 99, 1.5, 2)
+        //    generando valores erróneos de Cantidad/L/W/H/kg/m³.
+        //    Patrón válido: opcionalmente signo, dígitos, y opcionalmente coma/punto + dígitos.
+        if (NUMERIC_COLS.includes(col) && !/^-?\d+([.,]\d+)?$/.test(str)) {
+          descToks.push(t);
+          continue;
+        }
+
+        dataToks.push(t);
       }
 
       const rowStr   = row.map(t => t.str).join('');
@@ -807,9 +838,23 @@ const Exporter = (() => {
     sheetVistaPDF(wb, deliveries);
     sheetResumen(wb, deliveries);
     sheetDB(wb, deliveries);
-    const d   = new Date();
-    const tag = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
-    XLSX.writeFile(wb, `PackingList_${tag}.xlsx`);
+    // Nombre del archivo basado en el PDF fuente
+    const srcFiles = [...new Set(deliveries.map(d => d.sourceFile).filter(Boolean))];
+    let fileName;
+    if (srcFiles.length === 1) {
+      // Un solo PDF → usar su nombre sin extensión
+      fileName = srcFiles[0].replace(/\.pdf$/i, '');
+    } else if (srcFiles.length > 1) {
+      // Varios PDFs → primero + cantidad adicional
+      fileName = srcFiles[0].replace(/\.pdf$/i, '') + `_(+${srcFiles.length - 1})`;
+    } else {
+      // Sin nombre de archivo (datos de prueba)
+      const d2  = new Date();
+      fileName  = `PackingList_${d2.getFullYear()}${String(d2.getMonth()+1).padStart(2,'0')}${String(d2.getDate()).padStart(2,'0')}`;
+    }
+    // Sanitizar caracteres no válidos en nombres de archivo
+    fileName = fileName.replace(/[\\/:*?"<>|]/g, '_');
+    XLSX.writeFile(wb, `${fileName}.xlsx`);
     notify('Excel exportado correctamente ✓', 'success');
   }
 
