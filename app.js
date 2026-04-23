@@ -247,20 +247,43 @@ const Parser = (() => {
   }
 
   // ── 3. EFFECTIVE X FOR ZONE ASSIGNMENT ──────────────────────────────────
-  // In PDF tables numeric values are right-aligned within their cells, so the
-  // token's LEFT edge (transform[4]) sits further LEFT for wider numbers.
-  // A wide number like "11.000" can have its left edge fall BEFORE the column's
-  // left zone boundary, causing it to be mis-assigned to the previous column while
-  // a narrower number from the NEXT column wins.
+  // In PDF tables numeric values are RIGHT-ALIGNED within their cells, so the
+  // token's LEFT edge (transform[4]) sits further LEFT for wider numbers.  When
+  // joinBrokenTokens merges a split number (e.g. ["11",".",000"]), the merged token
+  // inherits the leftmost component's position AND a width equal to only the tiny
+  // inter-component gaps (≈ 2pt), because PDF.js often reports width=0 per glyph.
+  // Using raw left edge — or even left+1pt — places the merged token in the WRONG
+  // zone (too far left).
   //
-  // Fix: for number tokens use the token CENTER (x + width/2) for zone assignment.
-  //   The center of a right-aligned number is a better representative position.
-  //   For text/code tokens use the raw left edge (they are left-aligned).
+  // Strategy per PDF type:
   //
-  // Falls back to left edge when width is 0 or unknown.
-  function effectiveX(tok, tokenType) {
-    const w = tok.width || 0;
-    return (tokenType === 'number' && w > 0) ? tok.transform[4] + w / 2 : tok.transform[4];
+  //   Type 1 — con Marca (right=nextCx zones):
+  //     Use RIGHT EDGE − 3pt buffer  →  right-aligned numbers sit with their right
+  //     edge near the cell's right boundary (≈ nextCx).  Subtracting 3pt keeps the
+  //     token just inside the zone [left, nextCx) even with minor estimation error.
+  //
+  //   Type 2 — sin Marca (strict midpoint zones):
+  //     Use CENTER  →  midpoint zones are narrow; right edge would overshoot into
+  //     the next zone, but the center reliably falls within the correct zone.
+  //
+  // Width source (priority):
+  //   1. tok.width (reported by PDF.js) — correct when available
+  //   2. Estimated: string.length × |transform[0]| × 0.55  (font scale × char ratio)
+  //      Always used as a floor so merged tokens with width≈2pt get a realistic value.
+  //
+  // cols is passed so the function can determine Type 1 vs Type 2.
+  function effectiveX(tok, tokenType, cols) {
+    if (tokenType !== 'number') return tok.transform[4];
+    const reported  = tok.width || 0;
+    // transform[0] = horizontal font scale (≈ fontSize × scaleX in PDF user units)
+    const estimated = Math.abs(tok.transform[0] || 10) * tok.str.length * 0.55;
+    const w = Math.max(reported, estimated);   // always use the larger: covers zero-width reports
+    if (!w) return tok.transform[4];
+
+    const useStrict = !cols || !cols.marca;    // true = Type 2 strict midpoints
+    return useStrict
+      ? tok.transform[4] + w / 2              // center  for Type 2
+      : tok.transform[4] + w - 3;             // right edge −3pt buffer for Type 1
   }
 
   // ── 4. COLUMN ZONE ASSIGNMENT ────────────────────────────────────────────
@@ -447,7 +470,7 @@ const Parser = (() => {
         const x    = t.transform[4];          // raw left edge
         const str  = t.str.trim();
         const type = classifyToken(str);       // 'number' | 'code' | 'ref' | 'text'
-        const xEff = effectiveX(t, type);      // center for numbers, left edge for text
+        const xEff = effectiveX(t, type, cols); // right-edge/center for numbers (type-aware)
 
         // Layer A: description boundary (uses raw left edge — physical position check)
         if (x < descZoneRight) { descToks.push(t); continue; }
@@ -476,7 +499,7 @@ const Parser = (() => {
         parsedTotals = {};
         for (const t of dataToks) {
           const tp  = classifyToken(t.str.trim());
-          const col = assignCol(effectiveX(t, tp), cols);
+          const col = assignCol(effectiveX(t, tp, cols), cols);
           const val = parseFloat(t.str.replace(',', '.'));
           if (col && col !== 'producto' && !isNaN(val)) parsedTotals[col] = val;
         }
@@ -517,7 +540,7 @@ const Parser = (() => {
         if (!parsedTotals) parsedTotals = {};
         for (const t of dataToks) {
           const tp  = classifyToken(t.str.trim());
-          const col = assignCol(effectiveX(t, tp), cols);
+          const col = assignCol(effectiveX(t, tp, cols), cols);
           const val = parseFloat(t.str.replace(',', '.'));
           if (col && col !== 'producto' && !isNaN(val)) parsedTotals[col] = val;
         }
@@ -578,7 +601,7 @@ const Parser = (() => {
     console.log(`[applyData] code=${cur.code}  tokens:`,
       rightToks.map(t => {
         const tp = classifyToken(t.str.trim());
-        const xe = effectiveX(t, tp);
+        const xe = effectiveX(t, tp, cols);
         return `"${t.str.trim()}"@${Math.round(t.transform[4])}(xEff=${Math.round(xe)})→${assignCol(xe,cols)||'?'}`;
       }).join('  '));
 
@@ -586,17 +609,13 @@ const Parser = (() => {
       const str  = t.str.trim();
       if (!str) continue;
       const type = classifyToken(str);
-      const xEff = effectiveX(t, type);
+      const xEff = effectiveX(t, type, cols);
 
       const col = assignCol(xEff, cols);
       if (!col || col === 'producto') continue;
       const num = parseFloat(str.replace(',', '.'));
 
       switch (col) {
-        // First-wins para campos numéricos: el primer token (x más pequeño = número
-        // más ancho = más a la izquierda, valor correcto en columnas right-aligned)
-        // gana; si un token estrecho de la columna adyacente "se cuela" en esta zona
-        // llega después y no sobreescribe el valor ya correcto.
         case 'cantidad':  if (!cur.quantity)  cur.quantity  = isNaN(num) ? 0 : num; break;
         case 'marca':     if (!cur.brand)     cur.brand     = str;                   break;
         case 'l':         if (!cur.l)         cur.l         = isNaN(num) ? 0 : num; break;
@@ -625,7 +644,7 @@ const Parser = (() => {
       const str  = t.str.trim();
       if (!str) continue;
       const type = classifyToken(str);
-      const xEff = effectiveX(t, type);
+      const xEff = effectiveX(t, type, cols);
       const col  = assignCol(xEff, cols);
       if (!col || col === 'producto') continue;
       const num = parseFloat(str.replace(',', '.'));
