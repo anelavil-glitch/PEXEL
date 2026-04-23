@@ -246,7 +246,24 @@ const Parser = (() => {
     return cols;
   }
 
-  // ── 3. COLUMN ZONE ASSIGNMENT ────────────────────────────────────────────
+  // ── 3. EFFECTIVE X FOR ZONE ASSIGNMENT ──────────────────────────────────
+  // In PDF tables numeric values are right-aligned within their cells, so the
+  // token's LEFT edge (transform[4]) sits further LEFT for wider numbers.
+  // A wide number like "11.000" can have its left edge fall BEFORE the column's
+  // left zone boundary, causing it to be mis-assigned to the previous column while
+  // a narrower number from the NEXT column wins.
+  //
+  // Fix: for number tokens use the token CENTER (x + width/2) for zone assignment.
+  //   The center of a right-aligned number is a better representative position.
+  //   For text/code tokens use the raw left edge (they are left-aligned).
+  //
+  // Falls back to left edge when width is 0 or unknown.
+  function effectiveX(tok, tokenType) {
+    const w = tok.width || 0;
+    return (tokenType === 'number' && w > 0) ? tok.transform[4] + w / 2 : tok.transform[4];
+  }
+
+  // ── 4. COLUMN ZONE ASSIGNMENT ────────────────────────────────────────────
   // Maps a token's X coordinate to a column field using geometric zones.
   //
   // Zone boundary strategy:
@@ -427,15 +444,16 @@ const Parser = (() => {
       //            A single classifyToken call covers all three cases cleanly.
       const descToks = [], dataToks = [];
       for (const t of rowToks) {
-        const x    = t.transform[4];
+        const x    = t.transform[4];          // raw left edge
         const str  = t.str.trim();
-        const type = classifyToken(str);   // 'number' | 'code' | 'ref' | 'text'
+        const type = classifyToken(str);       // 'number' | 'code' | 'ref' | 'text'
+        const xEff = effectiveX(t, type);      // center for numbers, left edge for text
 
-        // Layer A: description boundary
+        // Layer A: description boundary (uses raw left edge — physical position check)
         if (x < descZoneRight) { descToks.push(t); continue; }
 
-        // Layer B: geometric zone
-        const col = assignCol(x, cols);
+        // Layer B: geometric zone (uses effective x to correctly place right-aligned numbers)
+        const col = assignCol(xEff, cols);
         if (!col || col === 'producto') { descToks.push(t); continue; }
 
         // Layer C: type validation for numeric columns
@@ -457,7 +475,8 @@ const Parser = (() => {
         if (cur) { products.push(cur); cur = null; }
         parsedTotals = {};
         for (const t of dataToks) {
-          const col = assignCol(t.transform[4], cols);
+          const tp  = classifyToken(t.str.trim());
+          const col = assignCol(effectiveX(t, tp), cols);
           const val = parseFloat(t.str.replace(',', '.'));
           if (col && col !== 'producto' && !isNaN(val)) parsedTotals[col] = val;
         }
@@ -497,7 +516,8 @@ const Parser = (() => {
         if (cur) { products.push(cur); cur = null; }
         if (!parsedTotals) parsedTotals = {};
         for (const t of dataToks) {
-          const col = assignCol(t.transform[4], cols);
+          const tp  = classifyToken(t.str.trim());
+          const col = assignCol(effectiveX(t, tp), cols);
           const val = parseFloat(t.str.replace(',', '.'));
           if (col && col !== 'producto' && !isNaN(val)) parsedTotals[col] = val;
         }
@@ -556,14 +576,19 @@ const Parser = (() => {
   function applyDataTokens(cur, rightToks, cols) {
     const nBultosParts = [];
     console.log(`[applyData] code=${cur.code}  tokens:`,
-      rightToks.map(t => `"${t.str.trim()}"@${Math.round(t.transform[4])}→${assignCol(t.transform[4],cols)||'?'}`).join('  '));
+      rightToks.map(t => {
+        const tp = classifyToken(t.str.trim());
+        const xe = effectiveX(t, tp);
+        return `"${t.str.trim()}"@${Math.round(t.transform[4])}(xEff=${Math.round(xe)})→${assignCol(xe,cols)||'?'}`;
+      }).join('  '));
 
     for (const t of rightToks) {
-      const x   = t.transform[4];
-      const str = t.str.trim();
+      const str  = t.str.trim();
       if (!str) continue;
+      const type = classifyToken(str);
+      const xEff = effectiveX(t, type);
 
-      const col = assignCol(x, cols);
+      const col = assignCol(xEff, cols);
       if (!col || col === 'producto') continue;
       const num = parseFloat(str.replace(',', '.'));
 
@@ -597,9 +622,11 @@ const Parser = (() => {
   function applyDataTokensSafe(cur, dataToks, cols) {
     const nBultosParts = [];
     for (const t of dataToks) {
-      const str = t.str.trim();
+      const str  = t.str.trim();
       if (!str) continue;
-      const col = assignCol(t.transform[4], cols);
+      const type = classifyToken(str);
+      const xEff = effectiveX(t, type);
+      const col  = assignCol(xEff, cols);
       if (!col || col === 'producto') continue;
       const num = parseFloat(str.replace(',', '.'));
       switch (col) {
