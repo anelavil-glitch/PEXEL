@@ -276,14 +276,30 @@ const Parser = (() => {
     if (tokenType !== 'number') return tok.transform[4];
     const reported  = tok.width || 0;
     // transform[0] = horizontal font scale (≈ fontSize × scaleX in PDF user units)
+    // 0.55 = empirical average glyph-width ratio for the numeric fonts in these PDFs
     const estimated = Math.abs(tok.transform[0] || 10) * tok.str.length * 0.55;
     const w = Math.max(reported, estimated);   // always use the larger: covers zero-width reports
-    if (!w) return tok.transform[4];
 
     const useStrict = !cols || !cols.marca;    // true = Type 2 strict midpoints
     return useStrict
       ? tok.transform[4] + w / 2              // center  for Type 2
-      : tok.transform[4] + w - 3;             // right edge −3pt buffer for Type 1
+      : tok.transform[4] + w - 3;             // right edge −3pt; keeps token inside zone [left, nextCx)
+  }
+
+  // Normalise comma-decimal separator and parse to float (e.g. "1,5" → 1.5).
+  function parseNum(str) { return parseFloat((str || '').replace(',', '.')); }
+
+  // Accumulate numeric column values from a set of data tokens into a plain object.
+  // Used for both labelled ("TOTAL …") and implicit (unlabelled) totals rows.
+  function accumulateTotals(toks, cols) {
+    const out = {};
+    for (const t of toks) {
+      const tp  = classifyToken(t.str.trim());
+      const col = assignCol(effectiveX(t, tp, cols), cols);
+      const val = parseNum(t.str);
+      if (col && col !== 'producto' && !isNaN(val)) out[col] = val;
+    }
+    return out;
   }
 
   // ── 4. COLUMN ZONE ASSIGNMENT ────────────────────────────────────────────
@@ -496,13 +512,7 @@ const Parser = (() => {
       // ── Fila de totales ───────────────────────────────────────────────
       if (/^totale?s?[\s:]/i.test(descText) || /^total$/i.test((descText.split(/\s/)[0] || ''))) {
         if (cur) { products.push(cur); cur = null; }
-        parsedTotals = {};
-        for (const t of dataToks) {
-          const tp  = classifyToken(t.str.trim());
-          const col = assignCol(effectiveX(t, tp, cols), cols);
-          const val = parseFloat(t.str.replace(',', '.'));
-          if (col && col !== 'producto' && !isNaN(val)) parsedTotals[col] = val;
-        }
+        parsedTotals = accumulateTotals(dataToks, cols);
         continue;
       }
 
@@ -537,13 +547,7 @@ const Parser = (() => {
       // La almacenamos en parsedTotals y la excluimos de la tabla de productos.
       if (!code && !descText && hasData && !cols.marca) {
         if (cur) { products.push(cur); cur = null; }
-        if (!parsedTotals) parsedTotals = {};
-        for (const t of dataToks) {
-          const tp  = classifyToken(t.str.trim());
-          const col = assignCol(effectiveX(t, tp, cols), cols);
-          const val = parseFloat(t.str.replace(',', '.'));
-          if (col && col !== 'producto' && !isNaN(val)) parsedTotals[col] = val;
-        }
+        parsedTotals = Object.assign(parsedTotals || {}, accumulateTotals(dataToks, cols));
         continue;
       }
 
@@ -598,13 +602,6 @@ const Parser = (() => {
 
   function applyDataTokens(cur, rightToks, cols) {
     const nBultosParts = [];
-    console.log(`[applyData] code=${cur.code}  tokens:`,
-      rightToks.map(t => {
-        const tp = classifyToken(t.str.trim());
-        const xe = effectiveX(t, tp, cols);
-        return `"${t.str.trim()}"@${Math.round(t.transform[4])}(xEff=${Math.round(xe)})→${assignCol(xe,cols)||'?'}`;
-      }).join('  '));
-
     for (const t of rightToks) {
       const str  = t.str.trim();
       if (!str) continue;
@@ -613,8 +610,11 @@ const Parser = (() => {
 
       const col = assignCol(xEff, cols);
       if (!col || col === 'producto') continue;
-      const num = parseFloat(str.replace(',', '.'));
+      const num = parseNum(str);
 
+      // First-wins: numeric columns are right-aligned, so the widest (leftmost) token
+      // arrives first and is the correct value; narrower tokens from adjacent columns
+      // that bleed into this zone arrive later and must not overwrite.
       switch (col) {
         case 'cantidad':  if (!cur.quantity)  cur.quantity  = isNaN(num) ? 0 : num; break;
         case 'marca':     if (!cur.brand)     cur.brand     = str;                   break;
@@ -647,7 +647,7 @@ const Parser = (() => {
       const xEff = effectiveX(t, type, cols);
       const col  = assignCol(xEff, cols);
       if (!col || col === 'producto') continue;
-      const num = parseFloat(str.replace(',', '.'));
+      const num = parseNum(str);
       switch (col) {
         case 'cantidad': if (!cur.quantity)  cur.quantity = isNaN(num) ? 0 : num; break;
         case 'marca':    if (!cur.brand)     cur.brand    = str;                   break;
